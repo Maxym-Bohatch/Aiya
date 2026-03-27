@@ -1,8 +1,7 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import importlib
 import os
-import shutil
 import subprocess
 import threading
 import tkinter as tk
@@ -15,10 +14,12 @@ import requests
 
 from client.env_tools import ensure_defaults, generate_secure_token, parse_env_file, save_env_file
 from client.help_content import HELP_TEXT
+from client.system_checks import CheckResult, find_tesseract_path, format_check_report, run_client_checks
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG_PATH = PROJECT_ROOT / ".env.client"
 EXAMPLE_CONFIG_PATH = PROJECT_ROOT / ".env.client.example"
+CLIENT_PREREQS_SCRIPT = PROJECT_ROOT / "scripts" / "client" / "install_client_prereqs.ps1"
 os.environ.setdefault("AIYA_ENV_FILE", str(DEFAULT_CONFIG_PATH))
 
 DEFAULTS = {
@@ -59,11 +60,12 @@ class AiyaClientLauncher:
         self.config_path = DEFAULT_CONFIG_PATH
         self.values = self._load_values()
         self.companion = None
+        self.latest_checks: list[CheckResult] = []
 
         self.root = tk.Tk()
         self.root.title("Aiya Client Launcher")
-        self.root.geometry("1220x900")
-        self.root.minsize(1020, 780)
+        self.root.geometry("1240x930")
+        self.root.minsize(1080, 800)
         self.root.configure(bg="#f4efe6")
 
         self.status_var = tk.StringVar(value=f"Config: {self.config_path}")
@@ -76,6 +78,7 @@ class AiyaClientLauncher:
         self._configure_styles()
         self._build_ui()
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+        self.root.after(300, self.run_client_diagnostics)
 
     def _configure_styles(self):
         style = ttk.Style()
@@ -98,15 +101,21 @@ class AiyaClientLauncher:
         shell.pack(fill="both", expand=True)
 
         ttk.Label(shell, text="Aiya Desktop Client", style="Aiya.TLabel", font=("Segoe UI", 22, "bold")).pack(anchor="w")
-        ttk.Label(shell, text="Launcher, OCR/Tesseract setup, Docker bridge, admin secrets, wiki, and desktop companion.", style="Aiya.TLabel").pack(anchor="w", pady=(4, 10))
+        ttk.Label(
+            shell,
+            text="Launcher, dependency checks, OCR/Tesseract setup, Docker bridge, admin secrets, wiki, and desktop companion.",
+            style="Aiya.TLabel",
+        ).pack(anchor="w", pady=(4, 10))
 
         action_bar = ttk.Frame(shell, style="Aiya.TFrame")
         action_bar.pack(fill="x", pady=(0, 10))
         action_buttons = [
             ("Save Config", self.save_config),
+            ("Check Client Setup", self.run_client_diagnostics),
             ("Ping API", self.check_api_health),
             ("Ping Host Bridge", self.check_host_bridge),
             ("Install Tesseract", self.install_tesseract),
+            ("Install Python Deps", self.install_client_requirements),
             ("Open Companion", self.open_companion),
             ("Close Companion", self.close_companion),
         ]
@@ -137,6 +146,24 @@ class AiyaClientLauncher:
         self.log.pack(fill="both", expand=False, pady=(10, 0))
         self._append_log("Launcher ready.")
 
+    def _make_readonly_text(self, parent, *, height: int, font: tuple[str, int] | tuple[str, int, str] = ("Segoe UI", 10)):
+        widget = tk.Text(parent, height=height, wrap="word", bg="#fffdf8", relief="solid", font=font)
+        widget.bind("<Key>", self._readonly_keypress)
+        widget.bind("<Control-a>", self._select_all_text)
+        widget.bind("<Control-A>", self._select_all_text)
+        return widget
+
+    def _select_all_text(self, event):
+        event.widget.tag_add("sel", "1.0", "end-1c")
+        return "break"
+
+    def _readonly_keypress(self, event):
+        if event.state & 0x4 and event.keysym.lower() in {"a", "c", "insert"}:
+            return None
+        if event.keysym in {"Left", "Right", "Up", "Down", "Prior", "Next", "Home", "End"}:
+            return None
+        return "break"
+
     def _build_connection_tab(self):
         rows = [
             ("API URL", "API_URL"),
@@ -151,11 +178,24 @@ class AiyaClientLauncher:
             ttk.Label(self.connection_tab, text=label, style="Aiya.TLabel").grid(row=index, column=0, sticky="w", pady=6, padx=(0, 12))
             ttk.Entry(self.connection_tab, textvariable=self.connection_vars[key], width=72).grid(row=index, column=1, sticky="ew", pady=6)
         self.connection_tab.columnconfigure(1, weight=1)
-        info = tk.Text(self.connection_tab, height=12, wrap="word", bg="#fffdf8", relief="solid", font=("Segoe UI", 10))
-        info.grid(row=len(rows), column=0, columnspan=2, sticky="nsew", pady=(14, 0))
-        info.insert("1.0", "Use localhost when client and server are on the same PC. Use a LAN IP for split deployment.\n\nTesseract is used for OCR. Ollama is used for local translation overlay.\nHotkeys in companion: F8 capture, F9 OCR, F10 game, F11 translation area.")
-        info.configure(state="disabled")
-        self.connection_tab.rowconfigure(len(rows), weight=1)
+
+        info = self._make_readonly_text(self.connection_tab, height=7)
+        info.grid(row=len(rows), column=0, columnspan=2, sticky="nsew", pady=(14, 10))
+        info.insert(
+            "1.0",
+            "Use localhost when client and server are on the same PC. Use a LAN or Hamachi IP for split deployment.\n\n"
+            "Tesseract is used for OCR. Hotkeys in companion: F8 capture, F9 OCR, F10 game, F11 translation area.\n\n"
+            "Run 'Check Client Setup' after changing machines so the launcher can spot missing Tesseract or Python dependencies.",
+        )
+
+        diag_label = ttk.Label(self.connection_tab, text="Client Diagnostics", style="Aiya.TLabel", font=("Segoe UI Semibold", 11))
+        diag_label.grid(row=len(rows) + 1, column=0, columnspan=2, sticky="w", pady=(2, 6))
+        self.diagnostics_output = tk.Text(self.connection_tab, height=12, wrap="word", bg="#fffdf8", relief="solid", font=("Consolas", 10))
+        self.diagnostics_output.grid(row=len(rows) + 2, column=0, columnspan=2, sticky="nsew")
+        self.diagnostics_output.bind("<Key>", self._readonly_keypress)
+        self.diagnostics_output.bind("<Control-a>", self._select_all_text)
+        self.diagnostics_output.bind("<Control-A>", self._select_all_text)
+        self.connection_tab.rowconfigure(len(rows) + 2, weight=1)
 
     def _build_admin_tab(self):
         rows = [
@@ -195,10 +235,14 @@ class AiyaClientLauncher:
         ttk.Button(server_actions, text="Load Server Config", command=self.load_server_config, style="Aiya.TButton").pack(side="left", padx=(0, 8))
         ttk.Button(server_actions, text="Apply Server Config", command=self.apply_server_config, style="Aiya.TButton").pack(side="left")
 
-        notes = tk.Text(self.admin_tab, height=8, wrap="word", bg="#fffdf8", relief="solid", font=("Segoe UI", 10))
+        notes = self._make_readonly_text(self.admin_tab, height=7)
         notes.grid(row=len(rows) + 3, column=0, columnspan=2, sticky="nsew", pady=(12, 0))
-        notes.insert("1.0", "Host bridge can now rotate admin and host tokens, Telegram token, extra admin tokens, and DB password from the client side. Extra admins are stored as a comma-separated token list in AIYA_EXTRA_ADMIN_TOKENS. DB password rotation is applied on the running PostgreSQL instance before the .env file is rewritten.")
-        notes.configure(state="disabled")
+        notes.insert(
+            "1.0",
+            "Host bridge can rotate admin and host tokens, Telegram token, extra admin tokens, and DB password from the client side.\n\n"
+            "Extra admins are stored as a comma-separated token list in AIYA_EXTRA_ADMIN_TOKENS.\n\n"
+            "DB password rotation is applied on the running PostgreSQL instance before the .env file is rewritten.",
+        )
         self.admin_tab.rowconfigure(len(rows) + 3, weight=1)
 
     def _build_docker_tab(self):
@@ -215,6 +259,9 @@ class AiyaClientLauncher:
             ttk.Button(buttons, text=label, command=command, style="Aiya.TButton").pack(side="left", padx=(0, 8))
         self.docker_output = tk.Text(self.docker_tab, wrap="word", bg="#fffdf8", relief="solid", font=("Consolas", 10))
         self.docker_output.pack(fill="both", expand=True, pady=(12, 0))
+        self.docker_output.bind("<Key>", self._readonly_keypress)
+        self.docker_output.bind("<Control-a>", self._select_all_text)
+        self.docker_output.bind("<Control-A>", self._select_all_text)
 
     def _build_wiki_tab(self):
         search_row = ttk.Frame(self.wiki_tab, style="Aiya.TFrame")
@@ -226,36 +273,86 @@ class AiyaClientLauncher:
         ttk.Button(search_row, text="Search Wiki", command=self.search_wiki, style="Aiya.TButton").pack(side="left")
         self.wiki_output = tk.Text(self.wiki_tab, wrap="word", bg="#fffdf8", relief="solid", font=("Segoe UI", 10))
         self.wiki_output.pack(fill="both", expand=True, pady=(12, 0))
+        self.wiki_output.bind("<Key>", self._readonly_keypress)
+        self.wiki_output.bind("<Control-a>", self._select_all_text)
+        self.wiki_output.bind("<Control-A>", self._select_all_text)
 
     def _build_help_tab(self):
         help_box = tk.Text(self.help_tab, wrap="word", bg="#fffdf8", relief="solid", font=("Segoe UI", 10))
         help_box.pack(fill="both", expand=True)
         help_box.insert("1.0", HELP_TEXT)
-        help_box.configure(state="disabled")
+        help_box.bind("<Key>", self._readonly_keypress)
+        help_box.bind("<Control-a>", self._select_all_text)
+        help_box.bind("<Control-A>", self._select_all_text)
 
     def _append_log(self, text: str):
         self.log.insert("end", text + "\n")
         self.log.see("end")
         self.status_var.set(text)
 
+    def _set_output_widget(self, widget: tk.Text, text: str):
+        widget.delete("1.0", "end")
+        widget.insert("1.0", text)
+
+    def _set_diagnostics_output(self, text: str):
+        self._set_output_widget(self.diagnostics_output, text)
+
     def _set_docker_output(self, text: str):
-        self.docker_output.delete("1.0", "end")
-        self.docker_output.insert("1.0", text)
+        self._set_output_widget(self.docker_output, text)
 
     def _set_wiki_output(self, text: str):
-        self.wiki_output.delete("1.0", "end")
-        self.wiki_output.insert("1.0", text)
+        self._set_output_widget(self.wiki_output, text)
 
     def _run_background(self, action: Callable[[], None]):
         threading.Thread(target=action, daemon=True).start()
 
     def save_config(self):
+        if not self.connection_vars["AIYA_TESSERACT_CMD"].get().strip():
+            detected = find_tesseract_path()
+            if detected:
+                self.connection_vars["AIYA_TESSERACT_CMD"].set(str(detected))
         values = {key: var.get().strip() for key, var in self.connection_vars.items()}
         save_env_file(self.config_path, ensure_defaults(values, DEFAULTS))
         for key, value in values.items():
             os.environ[key] = value
         os.environ["AIYA_ENV_FILE"] = str(self.config_path)
         self._append_log(f"Saved client config to {self.config_path}")
+
+    def run_client_diagnostics(self):
+        values = {key: var.get().strip() for key, var in self.connection_vars.items()}
+        self.latest_checks = run_client_checks(values)
+        detected = find_tesseract_path(values.get("AIYA_TESSERACT_CMD", ""))
+        if detected and not values.get("AIYA_TESSERACT_CMD", "").strip():
+            self.connection_vars["AIYA_TESSERACT_CMD"].set(str(detected))
+        report = format_check_report(self.latest_checks)
+        self._set_diagnostics_output(report)
+        missing_required = [check.name for check in self.latest_checks if not check.ok and not check.optional]
+        if missing_required:
+            self._append_log(f"Client setup needs attention: {', '.join(missing_required)}")
+        else:
+            self._append_log("Client setup looks healthy.")
+
+    def install_client_requirements(self):
+        if not CLIENT_PREREQS_SCRIPT.exists():
+            self._append_log("Client prerequisite installer script is missing.")
+            return
+        self._append_log("Starting the client prerequisite installer. A PowerShell window may ask for confirmation.")
+        try:
+            subprocess.Popen(
+                [
+                    "powershell",
+                    "-NoProfile",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                    str(CLIENT_PREREQS_SCRIPT),
+                ],
+                cwd=str(PROJECT_ROOT),
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except Exception as exc:
+            self._append_log(f"Failed to launch client prerequisite installer: {exc}")
 
     def generate_admin_token(self):
         self.connection_vars["AIYA_ADMIN_TOKEN"].set(generate_secure_token())
@@ -323,27 +420,38 @@ class AiyaClientLauncher:
     def install_tesseract(self):
         self._append_log("Starting Tesseract install via winget. Windows may ask for elevation.")
         try:
-            subprocess.Popen([
-                "powershell",
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-Command",
-                "Start-Process winget -Verb RunAs -ArgumentList 'install -e --id UB-Mannheim.TesseractOCR --accept-package-agreements --accept-source-agreements'",
-            ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.Popen(
+                [
+                    "powershell",
+                    "-NoProfile",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-Command",
+                    "Start-Process winget -Verb RunAs -ArgumentList 'install -e --id UB-Mannheim.TesseractOCR --accept-package-agreements --accept-source-agreements'",
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
         except Exception as exc:
             self._append_log(f"Failed to launch Tesseract install: {exc}")
 
     def load_desktop_features(self):
         def action():
             try:
-                response = requests.get(self._api_url(f"/users/{self.connection_vars['AIYA_CLIENT_PLATFORM'].get().strip()}/{self.connection_vars['AIYA_CLIENT_EXTERNAL_ID'].get().strip()}/features"), timeout=20)
+                response = requests.get(
+                    self._api_url(
+                        f"/users/{self.connection_vars['AIYA_CLIENT_PLATFORM'].get().strip()}/{self.connection_vars['AIYA_CLIENT_EXTERNAL_ID'].get().strip()}/features"
+                    ),
+                    timeout=20,
+                )
                 response.raise_for_status()
                 payload = response.json()
+
                 def apply_payload():
                     for key, _label in FEATURE_FIELDS:
                         self.feature_vars[key].set(bool(payload.get(key, False)))
                     self._append_log("Loaded desktop user feature flags from API.")
+
                 self.root.after(0, apply_payload)
             except Exception as exc:
                 self.root.after(0, lambda: self._append_log(f"Loading features failed: {exc}"))
@@ -352,7 +460,13 @@ class AiyaClientLauncher:
     def apply_desktop_features(self):
         def action():
             try:
-                response = requests.patch(self._api_url(f"/users/{self.connection_vars['AIYA_CLIENT_PLATFORM'].get().strip()}/{self.connection_vars['AIYA_CLIENT_EXTERNAL_ID'].get().strip()}/features"), json={key: var.get() for key, var in self.feature_vars.items()}, timeout=20)
+                response = requests.patch(
+                    self._api_url(
+                        f"/users/{self.connection_vars['AIYA_CLIENT_PLATFORM'].get().strip()}/{self.connection_vars['AIYA_CLIENT_EXTERNAL_ID'].get().strip()}/features"
+                    ),
+                    json={key: var.get() for key, var in self.feature_vars.items()},
+                    timeout=20,
+                )
                 response.raise_for_status()
                 self.root.after(0, lambda: self._append_log("Applied desktop user feature flags."))
             except Exception as exc:
@@ -365,10 +479,12 @@ class AiyaClientLauncher:
                 response = requests.get(self._host_url("/config"), headers=self._host_headers(), timeout=20)
                 response.raise_for_status()
                 payload = response.json().get("config", {})
+
                 def apply_values():
                     for key, var in self.server_config_vars.items():
                         var.set(payload.get(key, ""))
                     self._append_log("Loaded server config through host bridge.")
+
                 self.root.after(0, apply_values)
             except Exception as exc:
                 self.root.after(0, lambda: self._append_log(f"Loading server config failed: {exc}"))
@@ -378,7 +494,12 @@ class AiyaClientLauncher:
         def action():
             updates = {key: var.get().strip() for key, var in self.server_config_vars.items() if var.get().strip()}
             try:
-                response = requests.post(self._host_url("/config/update"), headers=self._host_headers(), json={"updates": updates, "restart_services": True}, timeout=60)
+                response = requests.post(
+                    self._host_url("/config/update"),
+                    headers=self._host_headers(),
+                    json={"updates": updates, "restart_services": True},
+                    timeout=60,
+                )
                 response.raise_for_status()
                 payload = response.json()
                 changed = ", ".join(payload.get("changed_keys", [])) or "no changes"
@@ -393,21 +514,30 @@ class AiyaClientLauncher:
         if not query:
             messagebox.showinfo("Wiki", "Enter a query first.")
             return
+
         def action():
             try:
-                response = requests.post(self._api_url("/wiki/search"), json={"query": query, "language": self.wiki_lang_var.get().strip() or "uk", "limit": 3}, timeout=30)
+                response = requests.post(
+                    self._api_url("/wiki/search"),
+                    json={"query": query, "language": self.wiki_lang_var.get().strip() or "uk", "limit": 3},
+                    timeout=30,
+                )
                 response.raise_for_status()
                 payload = response.json()
                 items = payload.get("items", [])
                 if not items:
                     text = payload.get("message", "No results.")
                 else:
-                    text = "\n\n".join(f"{item.get('title', '')}\n{item.get('description', '')}\n{item.get('extract', '')}\n{item.get('url', '')}" for item in items)
+                    text = "\n\n".join(
+                        f"{item.get('title', '')}\n{item.get('description', '')}\n{item.get('extract', '')}\n{item.get('url', '')}"
+                        for item in items
+                    )
                 self.root.after(0, lambda: self._set_wiki_output(text))
                 self.root.after(0, lambda: self._append_log(f"Wiki search completed for '{query}'."))
             except Exception as exc:
                 self.root.after(0, lambda: self._set_wiki_output(f"Wiki search failed: {exc}"))
                 self.root.after(0, lambda: self._append_log(f"Wiki search failed: {exc}"))
+
         self._run_background(action)
 
     def open_url(self, url: str):
@@ -420,6 +550,23 @@ class AiyaClientLauncher:
 
     def open_companion(self):
         self.save_config()
+        self.run_client_diagnostics()
+        blocking = [check for check in self.latest_checks if not check.ok and not check.optional and check.name in {"Python requests", "Pillow"}]
+        if blocking:
+            messagebox.showerror(
+                "Companion",
+                "The client is missing required Python dependencies.\n\n"
+                "Run 'Install Python Deps' and then try again.",
+            )
+            return
+
+        tesseract_ok = any(check.name == "Tesseract OCR" and check.ok for check in self.latest_checks)
+        if not tesseract_ok:
+            messagebox.showwarning(
+                "Companion",
+                "Tesseract was not found. The companion can still open, but OCR and screen text translation will not work until it is installed.",
+            )
+
         if self.companion and getattr(self.companion, "root", None) and self.companion.root.winfo_exists():
             self.companion.root.lift()
             self._append_log("Desktop companion window is already open.")
@@ -427,6 +574,7 @@ class AiyaClientLauncher:
         try:
             import config
             import desktop_companion
+
             importlib.reload(config)
             desktop_companion = importlib.reload(desktop_companion)
             self.companion = desktop_companion.AiyaDesktop(master=self.root)

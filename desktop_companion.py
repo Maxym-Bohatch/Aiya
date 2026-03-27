@@ -97,6 +97,15 @@ class AiyaDesktop:
 
         if pytesseract and settings.tesseract_cmd:
             pytesseract.pytesseract.tesseract_cmd = settings.tesseract_cmd
+        self._announce_runtime_status()
+
+    def _announce_runtime_status(self):
+        if not ImageGrab:
+            self.append_log("system", "Pillow ImageGrab недоступний. Захоплення екрана не працюватиме.")
+        if not pytesseract:
+            self.append_log("system", "pytesseract недоступний. OCR і переклад з екрана не працюватимуть.")
+        elif not settings.tesseract_cmd:
+            self.append_log("system", "Шлях до Tesseract не заданий. OCR запрацює після налаштування AIYA_TESSERACT_CMD.")
 
     def _configure_styles(self):
         style = ttk.Style()
@@ -390,6 +399,10 @@ class AiyaDesktop:
         try:
             response = requests.post(f"{self.api_url}/speech/file", json={"text": text}, timeout=180)
             response.raise_for_status()
+            content_type = (response.headers.get("Content-Type") or "").lower()
+            if "wav" not in content_type and "wave" not in content_type:
+                self.root.after(0, lambda: self.append_log("system", "Локальне відтворення companion зараз підтримує лише WAV-аудіо."))
+                return
             with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as temp_file:
                 temp_file.write(response.content)
                 temp_path = temp_file.name
