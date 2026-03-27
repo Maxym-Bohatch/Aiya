@@ -51,6 +51,11 @@ SERVER_SECRET_FIELDS = [
     ("HOST_CONTROL_TOKEN", "Host Token"),
     ("TELEGRAM_TOKEN", "Telegram Token"),
     ("DB_PASSWORD", "DB Password"),
+    ("AIYA_TTS_PROVIDER", "TTS Provider"),
+    ("TTS_VOICE", "TTS Voice"),
+    ("AIYA_TTS_RATE", "TTS Rate"),
+    ("AIYA_TTS_PITCH", "TTS Pitch"),
+    ("AIYA_ALLOW_LOCAL_TTS", "Allow Local TTS"),
     ("OLLAMA_CHAT_MODEL", "Chat Model"),
 ]
 

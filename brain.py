@@ -242,7 +242,7 @@ def synthesize_speech(text):
     if not voice_delivery_enabled():
         return {
             "enabled": False,
-            "message": "High-quality TTS backend is not configured yet. Set TTS_BACKEND_URL or explicitly allow the local fallback.",
+            "message": "High-quality TTS backend is not configured yet. Set TTS_BACKEND_URL, keep AIYA_TTS_PROVIDER=edge, or explicitly allow the local fallback.",
             "profile": profile,
             "text": text,
         }
@@ -251,7 +251,7 @@ def synthesize_speech(text):
         "enabled": True,
         "profile": profile,
         "result": {
-            "mode": "local",
-            "message": "Local TTS is enabled. Use /speech/file for audio bytes.",
+            "mode": settings.tts_provider,
+            "message": "Built-in TTS delivery is enabled. Use /speech/file for audio bytes.",
         },
     }

@@ -131,8 +131,16 @@ async def handle_tg_message(message: types.Message):
                     async with session.post(SPEECH_URL, json={"text": answer}, timeout=180) as speech_response:
                         if speech_response.status == 200:
                             audio_bytes = await speech_response.read()
-                            audio = BufferedInputFile(audio_bytes, filename="aiya_reply.wav")
-                            await message.answer_audio(audio, caption="Голос Айї")
+                            content_type = (speech_response.headers.get("Content-Type") or "").lower()
+                            if "ogg" in content_type:
+                                audio = BufferedInputFile(audio_bytes, filename="aiya_reply.ogg")
+                                await message.answer_voice(audio, caption="Голос Айї")
+                            elif "mpeg" in content_type or "mp3" in content_type:
+                                audio = BufferedInputFile(audio_bytes, filename="aiya_reply.mp3")
+                                await message.answer_audio(audio, caption="Голос Айї")
+                            else:
+                                audio = BufferedInputFile(audio_bytes, filename="aiya_reply.wav")
+                                await message.answer_audio(audio, caption="Голос Айї")
     except Exception as e:
         await message.answer(f"Помилка зв'язку з ядром: {e}")
 

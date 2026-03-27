@@ -26,7 +26,8 @@ Aiya is now structured as a Docker-first local assistant backend with:
   - `/emoji on`
   - `/emoji off`
 - image generation and TTS are wired as pluggable backends via `IMAGE_BACKEND_URL` and `TTS_BACKEND_URL`
-- local offline TTS works inside Docker through `espeak-ng`
+- higher-quality TTS can run through the built-in `edge-tts` provider or an external backend via `TTS_BACKEND_URL`
+- local offline `espeak-ng` fallback exists only as an explicit escape hatch when `AIYA_ALLOW_LOCAL_TTS=true`
 - Telegram can send Aiya voice replies when `tts_enabled` is on for that user
 - `desktop_companion.py` gives a simple white-green avatar window, subtitle bubble, and optional OCR on the host machine
 - `client/launcher.py` gives one GUI entry point for client config, health checks, admin token generation, Docker bridge control, wiki lookup, and opening the desktop companion
@@ -103,6 +104,15 @@ Hotkeys in desktop companion:
 - `F8`: capture screen once
 - `F9`: toggle OCR
 - `F10`: toggle game mode
+- `F11`: translate selected region
+
+Game mode notes:
+
+- game mode needs current screen context before it can plan actions
+- the simplest flow is: set your game name, turn on `Screen Always`, then enable `Game On/Off`
+- if nothing happens yet, press `Capture Now` or `Game Step Now`
+- keyboard actions require the game window to be focused on the client PC
+- virtual gamepad actions require `vgamepad` / ViGEm on the client PC
 
 ## Workspace layout
 
@@ -288,8 +298,12 @@ OLLAMA_CHAT_MODEL=
 OLLAMA_EMBED_MODEL=
 OLLAMA_VISION_MODEL=
 TTS_BACKEND_URL=
+AIYA_TTS_PROVIDER=edge
+AIYA_TTS_RATE=+0%
+AIYA_TTS_PITCH=+0Hz
+AIYA_ALLOW_LOCAL_TTS=false
 IMAGE_BACKEND_URL=
-TTS_VOICE=uk+f3
+TTS_VOICE=uk-UA-PolinaNeural
 ```
 
 ## API

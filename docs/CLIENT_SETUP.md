@@ -14,6 +14,7 @@
    - manage desktop feature flags
    - use the wiki tab
 6. If you run from source instead of the packaged EXE, use `scripts/client/install_client_prereqs.ps1` first.
+7. For game mode, open the companion, set the game name, switch to `Screen Always`, then enable `Game On/Off`.
 
 Recommended split:
 - Server PC: Docker, Ollama, PostgreSQL, Telegram, backend, rebuild scripts
