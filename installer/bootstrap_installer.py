@@ -223,6 +223,8 @@ class InstallerApp:
 
             self._drop_bundled_files(install_dir, mode)
             self._write_shortcuts(install_dir, mode)
+            self._initialize_git_checkout(install_dir, repo_url, branch)
+            self._offer_client_prereq_help(mode)
             write_install_info(
                 install_dir,
                 {
@@ -238,6 +240,88 @@ class InstallerApp:
         except Exception as exc:
             self.root.after(0, lambda: self.append_log(f"Install failed: {exc}"))
             self.root.after(0, lambda: messagebox.showerror("Aiya Installer", str(exc)))
+
+    def _offer_client_prereq_help(self, mode: str):
+        if mode not in {"client", "both"}:
+            return
+        message = (
+            "Client mode still needs local prerequisites on the client PC.\n\n"
+            "- Tesseract is required for OCR and on-screen translation.\n"
+            "- If you run from source instead of the packaged EXE, install Python dependencies too.\n\n"
+            "Open the dependency helper after install?"
+        )
+        self.root.after(0, lambda: self.append_log("Client prerequisite reminder: Tesseract is still needed on the client PC."))
+        self.root.after(0, lambda: self._show_client_prereq_prompt(message))
+
+    def _show_client_prereq_prompt(self, message: str):
+        if not messagebox.askyesno("Aiya Installer", message):
+            return
+        if self._command_exists("winget"):
+            try:
+                subprocess.Popen(
+                    [
+                        "powershell",
+                        "-NoProfile",
+                        "-ExecutionPolicy",
+                        "Bypass",
+                        "-Command",
+                        "Start-Process winget -Verb RunAs -ArgumentList 'install -e --id UB-Mannheim.TesseractOCR --accept-package-agreements --accept-source-agreements'",
+                    ],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                self.append_log("Launched Tesseract install helper.")
+                return
+            except Exception as exc:
+                self.append_log(f"Could not launch Tesseract install helper: {exc}")
+        self.append_log("Open the launcher and use 'Check Client Setup' after install.")
+
+    def _initialize_git_checkout(self, install_dir: Path, repo_url: str, branch: str):
+        if not self._command_exists("git"):
+            self.root.after(0, lambda: self.append_log("Git is not installed, so repository binding was skipped."))
+            return
+        try:
+            if not (install_dir / ".git").exists():
+                subprocess.run(["git", "init"], cwd=install_dir, check=True, capture_output=True, text=True, timeout=30)
+                self.root.after(0, lambda: self.append_log("Initialized a local git repository in the install folder."))
+
+            remote_result = subprocess.run(
+                ["git", "remote", "get-url", "origin"],
+                cwd=install_dir,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if remote_result.returncode == 0:
+                subprocess.run(
+                    ["git", "remote", "set-url", "origin", repo_url],
+                    cwd=install_dir,
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+            else:
+                subprocess.run(
+                    ["git", "remote", "add", "origin", repo_url],
+                    cwd=install_dir,
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+
+            subprocess.run(
+                ["git", "branch", f"--move={branch}"],
+                cwd=install_dir,
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            self.root.after(0, lambda: self.append_log(f"Bound install folder to git remote {repo_url} ({branch})."))
+        except Exception as exc:
+            self.root.after(0, lambda exc=exc: self.append_log(f"Git binding skipped: {exc}"))
 
     def _download_repo(self, repo_url: str, branch: str) -> Path:
         zip_url = f"{repo_url}/archive/refs/heads/{branch}.zip"

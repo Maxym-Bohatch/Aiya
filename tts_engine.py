@@ -1,12 +1,22 @@
+import base64
 import math
 import os
+import re
 import struct
 import subprocess
 import tempfile
 import wave
 from pathlib import Path
 
+import requests
+
 from config import settings
+
+
+def voice_delivery_enabled() -> bool:
+    if settings.tts_backend_url:
+        return True
+    return os.getenv("AIYA_ALLOW_LOCAL_TTS", "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _fallback_wave(text: str, out_path: str):
@@ -30,18 +40,90 @@ def _fallback_wave(text: str, out_path: str):
             wav_file.writeframes(struct.pack("<h", sample))
 
 
-def synthesize_to_wav(text: str) -> str:
-    text = (text or "").strip() or "..."
+def _prepare_output_path(suffix: str) -> Path:
     output_dir = Path(tempfile.gettempdir()) / "aiya_tts"
     output_dir.mkdir(parents=True, exist_ok=True)
-    out_path = output_dir / f"aiya_{next(tempfile._get_candidate_names())}.wav"
+    return output_dir / f"aiya_{next(tempfile._get_candidate_names())}{suffix}"
+
+
+def _sanitize_text(text: str) -> str:
+    text = (text or "").strip() or "..."
+    text = re.sub(r"http[s]?://\S+", "", text)
+    text = re.sub(r"\s+", " ", text)
+    text = re.sub(r"[^\w\s.,!?;:()\-'\"/%]", " ", text, flags=re.UNICODE)
+    return text[:900].strip() or "..."
+
+
+def _guess_audio_format(content_type: str) -> tuple[str, str]:
+    lowered = (content_type or "").lower()
+    if "ogg" in lowered:
+        return ".ogg", "audio/ogg"
+    if "mpeg" in lowered or "mp3" in lowered:
+        return ".mp3", "audio/mpeg"
+    return ".wav", "audio/wav"
+
+
+def _write_backend_audio(response: requests.Response) -> tuple[str, str, str]:
+    suffix, media_type = _guess_audio_format(response.headers.get("Content-Type", ""))
+    out_path = _prepare_output_path(suffix)
+    out_path.write_bytes(response.content)
+    return str(out_path), media_type, out_path.name
+
+
+def _write_backend_json(payload: dict) -> tuple[str, str, str]:
+    audio_b64 = (payload.get("audio_base64") or "").strip()
+    if not audio_b64:
+        raise RuntimeError("TTS backend JSON response does not include audio_base64.")
+    audio_format = (payload.get("format") or "wav").strip().lower()
+    media_type = payload.get("media_type") or {
+        "wav": "audio/wav",
+        "mp3": "audio/mpeg",
+        "ogg": "audio/ogg",
+    }.get(audio_format, "application/octet-stream")
+    suffix = "." + audio_format.lstrip(".")
+    out_path = _prepare_output_path(suffix)
+    out_path.write_bytes(base64.b64decode(audio_b64))
+    return str(out_path), media_type, out_path.name
+
+
+def _synthesize_via_backend(text: str) -> tuple[str, str, str]:
+    response = requests.post(
+        settings.tts_backend_url,
+        json={"text": text},
+        timeout=180,
+    )
+    response.raise_for_status()
+    content_type = (response.headers.get("Content-Type") or "").lower()
+    if content_type.startswith("audio/"):
+        return _write_backend_audio(response)
+    return _write_backend_json(response.json())
+
+
+def synthesize_to_wav(text: str) -> str:
+    audio_path, _, _ = synthesize_to_audio_file(text)
+    return audio_path
+
+
+def synthesize_to_audio_file(text: str) -> tuple[str, str, str]:
+    prepared = _sanitize_text(text)
+
+    if settings.tts_backend_url:
+        try:
+            return _synthesize_via_backend(prepared)
+        except Exception as exc:
+            print(f"TTS backend error: {exc}")
+
+    if not voice_delivery_enabled():
+        raise RuntimeError("High-quality TTS backend is not configured. Set TTS_BACKEND_URL or AIYA_ALLOW_LOCAL_TTS=true.")
+
+    out_path = _prepare_output_path(".wav")
 
     fib = [1, 2, 3, 5, 8, 13]
-    rate = 148 + fib[len(text) % len(fib)] * 3
-    pitch = 68 + fib[(len(text) + 2) % len(fib)] * 2
-    word_gap = 2 + fib[(len(text) + 1) % len(fib)]
-    amplitude = 120 + fib[(len(text) + 3) % len(fib)] * 2
-    voice = os.getenv("TTS_VOICE", "uk+f3")
+    rate = 136 + fib[len(prepared) % len(fib)] * 2
+    pitch = 54 + fib[(len(prepared) + 2) % len(fib)] * 2
+    word_gap = 3 + fib[(len(prepared) + 1) % len(fib)]
+    amplitude = 115 + fib[(len(prepared) + 3) % len(fib)] * 2
+    voice = os.getenv("TTS_VOICE", "uk")
 
     try:
         subprocess.run(
@@ -59,22 +141,24 @@ def synthesize_to_wav(text: str) -> str:
                 str(amplitude),
                 "-w",
                 str(out_path),
-                text,
+                prepared,
             ],
             check=True,
             capture_output=True,
             text=True,
         )
     except Exception:
-        _fallback_wave(text, str(out_path))
+        _fallback_wave(prepared, str(out_path))
 
-    return str(out_path)
+    return str(out_path), "audio/wav", out_path.name
 
 
 def tts_capabilities():
     return {
         "voice_style": "young-feminine",
-        "voice": os.getenv("TTS_VOICE", "uk+f3"),
+        "voice": os.getenv("TTS_VOICE", "uk"),
         "desktop_palette": "white-green",
-        "enabled": settings.enable_tts,
+        "enabled": bool(settings.enable_tts or settings.tts_backend_url),
+        "delivery_enabled": voice_delivery_enabled(),
+        "backend_url": bool(settings.tts_backend_url),
     }

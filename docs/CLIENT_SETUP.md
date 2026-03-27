@@ -7,15 +7,18 @@
 3. Rename `.env.client.example` to `.env.client` and edit the URLs/tokens.
 4. Launch `AiyaClientLauncher.exe`.
 5. Use the launcher tabs to:
+   - check client setup
    - save config
    - open the desktop companion window
    - ping API / host bridge
    - manage desktop feature flags
    - use the wiki tab
+6. If you run from source instead of the packaged EXE, use `scripts/client/install_client_prereqs.ps1` first.
 
 Recommended split:
 - Server PC: Docker, Ollama, PostgreSQL, Telegram, backend, rebuild scripts
 - Client PC: only the packaged client bundle
+- Client PC OCR needs local Tesseract installed on that same PC
 
 Do not copy these server-only paths to the client PC:
 - `postgres_data`

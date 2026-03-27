@@ -6,10 +6,12 @@
 - Remote Open WebUI URL: optional second browser UI
 - Host Control URL: host bridge for Docker control, for example http://127.0.0.1:8765 or http://192.168.0.10:8765
 - Host Control Token: token required by the host bridge
+- Tesseract Path: local path to tesseract.exe on the client PC
 
 2. What this client does
 - starts the desktop companion window
 - stores client-side configuration in .env.client
+- checks client dependencies and can suggest fixes on startup
 - checks API and Docker bridge availability
 - can request start of API / Telegram / Web services through the host bridge
 - can update desktop user feature toggles on the backend
@@ -37,6 +39,7 @@
 
 6. Notes
 - OCR requires Tesseract installed on the client PC; set AIYA_TESSERACT_CMD if it is not in PATH
+- if you run from source, use the launcher's "Install Python Deps" button or scripts/client/install_client_prereqs.ps1
 - gamepad mode requires ViGEm / vgamepad support on the client PC
 - wiki module works on the backend side and needs outbound internet from the server side if you use public Wikipedia
 """

@@ -5,7 +5,7 @@ import requests
 import database as db
 from config import settings
 from image_engine import generate_local_image
-from tts_engine import tts_capabilities
+from tts_engine import tts_capabilities, voice_delivery_enabled
 
 OLLAMA_GENERATE = f"{settings.ollama_host}/api/generate"
 OLLAMA_EMBED = f"{settings.ollama_host}/api/embeddings"
@@ -69,7 +69,7 @@ def maybe_add_emoji(text, emoji_enabled):
 def extract_facts(user_name, text):
     base_prompt = db.get_prompt("gnome_facts_instruction")
     system_instruction = base_prompt if len(base_prompt) > 40 else """
-Ти Аналітик пам'яті Айї. Витягуй короткі факти про користувача у JSON.
+Ти аналітик пам'яті Айї. Витягуй короткі факти про користувача у JSON.
 Формат: {"facts": [{"text": "факт", "level": 1}]}
 Рівні:
 1 = публічний факт.
@@ -88,7 +88,7 @@ def extract_facts(user_name, text):
 
 def extract_entities_and_relations(text):
     system_instruction = """
-Ти Будівельник графа знань Айї.
+Ти будівельник графа знань Айї.
 Поверни тільки JSON у форматі:
 {"to_add": [["суб'єкт", "зв'язок", "об'єкт"]], "to_remove": [["суб'єкт", "зв'язок"]]}
 """
@@ -224,32 +224,34 @@ def synthesize_speech(text):
     if not settings.enable_tts and not settings.tts_backend_url:
         return {
             "enabled": False,
-            "message": "TTS backend is disabled. Set ENABLE_TTS=true and TTS_BACKEND_URL.",
+            "message": "TTS backend is disabled. Set ENABLE_TTS=true or configure TTS_BACKEND_URL.",
             "profile": profile,
             "text": text,
         }
 
-    if settings.enable_tts and not settings.tts_backend_url:
+    if settings.tts_backend_url:
         return {
             "enabled": True,
             "profile": profile,
             "result": {
-                "mode": "local",
-                "message": "Local TTS is enabled. Use /speech/file for audio bytes.",
+                "mode": "backend",
+                "message": "External TTS backend is configured. Use /speech/file for audio bytes.",
             },
         }
 
-    try:
-        response = requests.post(
-            settings.tts_backend_url,
-            json={"text": text, "profile": profile},
-            timeout=180,
-        )
-        response.raise_for_status()
+    if not voice_delivery_enabled():
         return {
-            "enabled": True,
+            "enabled": False,
+            "message": "High-quality TTS backend is not configured yet. Set TTS_BACKEND_URL or explicitly allow the local fallback.",
             "profile": profile,
-            "result": response.json(),
+            "text": text,
         }
-    except Exception as e:
-        return {"enabled": True, "profile": profile, "error": str(e)}
+
+    return {
+        "enabled": True,
+        "profile": profile,
+        "result": {
+            "mode": "local",
+            "message": "Local TTS is enabled. Use /speech/file for audio bytes.",
+        },
+    }

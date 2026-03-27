@@ -13,7 +13,7 @@ import service_control
 import translation_engine
 import wiki_engine
 from config import settings
-from tts_engine import synthesize_to_wav, tts_capabilities
+from tts_engine import synthesize_to_audio_file, tts_capabilities, voice_delivery_enabled
 
 app = FastAPI(title="Aiya Core", version="4.0")
 
@@ -248,7 +248,9 @@ async def ask_aiya(query: Query, background_tasks: BackgroundTasks, x_token: str
             "answer": answer,
             "user_id": internal_id,
             "features": user_settings,
-            "tts_available": settings.enable_tts and user_settings.get("tts_enabled", False),
+            "tts_available": bool(user_settings.get("tts_enabled", False)) and bool(
+                (settings.enable_tts or settings.tts_backend_url) and voice_delivery_enabled()
+            ),
             "image_generation_available": settings.enable_image_generation and user_settings.get("image_generation_enabled", False),
         }
     except HTTPException:
@@ -399,13 +401,16 @@ def synthesize(payload: SpeechRequest):
 
 @app.post("/speech/file")
 def synthesize_file(payload: SpeechRequest):
-    if not settings.enable_tts:
-        raise HTTPException(status_code=503, detail="Local TTS is disabled")
-    wav_path = synthesize_to_wav(payload.text)
+    if not settings.enable_tts and not settings.tts_backend_url:
+        raise HTTPException(status_code=503, detail="TTS is disabled")
+    try:
+        audio_path, media_type, filename = synthesize_to_audio_file(payload.text)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     return FileResponse(
-        wav_path,
-        media_type="audio/wav",
-        filename="aiya_reply.wav",
+        audio_path,
+        media_type=media_type,
+        filename=filename,
     )
 
 
