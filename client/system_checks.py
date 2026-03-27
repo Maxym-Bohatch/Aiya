@@ -43,6 +43,7 @@ def _module_present(module_name: str) -> bool:
 def run_client_checks(values: dict[str, str]) -> list[CheckResult]:
     configured_tesseract = values.get("AIYA_TESSERACT_CMD", "")
     tesseract_path = find_tesseract_path(configured_tesseract)
+    edge_ok = _module_present("edge_tts")
 
     results = [
         CheckResult(
@@ -62,6 +63,13 @@ def run_client_checks(values: dict[str, str]) -> list[CheckResult]:
             ok=_module_present("pytesseract"),
             summary="pytesseract is available." if _module_present("pytesseract") else "pytesseract is missing, so OCR cannot run.",
             details="The packaged EXE should include it, but source mode needs Python dependencies installed.",
+        ),
+        CheckResult(
+            name="edge-tts",
+            ok=edge_ok,
+            summary="edge-tts is available for the recommended neural voice path." if edge_ok else "edge-tts is missing, so the recommended neural TTS path will be unavailable.",
+            details="Install client/server Python dependencies or use a separate TTS_BACKEND_URL.",
+            optional=True,
         ),
         CheckResult(
             name="Tesseract OCR",
