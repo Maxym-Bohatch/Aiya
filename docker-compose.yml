@@ -1,0 +1,125 @@
+services:
+  db:
+    image: pgvector/pgvector:pg15
+    container_name: aiya_db
+    restart: always
+    environment:
+      POSTGRES_USER: maxim
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: aiya_memory
+    ports:
+      - "5433:5432"
+    volumes:
+      - ./postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U maxim -d aiya_memory"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  ollama:
+    image: ${OLLAMA_IMAGE:-ollama/ollama:latest}
+    container_name: aiya_brain
+    restart: always
+    ports:
+      - "11434:11434"
+    volumes:
+      - ./ollama_storage:/root/.ollama
+
+  ollama_setup:
+    build: .
+    container_name: aiya_ollama_setup
+    command: python ensure_models.py
+    restart: "no"
+    depends_on:
+      - ollama
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+      AIYA_PERFORMANCE_PROFILE: ${AIYA_PERFORMANCE_PROFILE:-auto}
+      AIYA_HARDWARE_CLASS: ${AIYA_HARDWARE_CLASS:-}
+      OLLAMA_CHAT_MODEL: ${OLLAMA_CHAT_MODEL:-}
+      OLLAMA_EMBED_MODEL: ${OLLAMA_EMBED_MODEL:-}
+      OLLAMA_VISION_MODEL: ${OLLAMA_VISION_MODEL:-}
+    env_file:
+      - .env
+
+  api:
+    build: .
+    container_name: aiya_core
+    command: python main.py
+    restart: always
+    environment:
+      DATABASE_URL: postgresql://maxim:${DB_PASSWORD}@db:5432/aiya_memory
+      OLLAMA_HOST: http://ollama:11434
+      AIYA_ADMIN_TOKEN: ${AIYA_ADMIN_TOKEN}
+      AIYA_EXTRA_ADMIN_TOKENS: ${AIYA_EXTRA_ADMIN_TOKENS:-}
+      TELEGRAM_TOKEN: ${TELEGRAM_TOKEN}
+      ENABLE_TTS: ${ENABLE_TTS:-true}
+      ENABLE_OCR: ${ENABLE_OCR:-false}
+      ENABLE_IMAGE_GENERATION: ${ENABLE_IMAGE_GENERATION:-false}
+      ENABLE_DESKTOP_SUBTITLES: ${ENABLE_DESKTOP_SUBTITLES:-true}
+      ENABLE_EMOJI: ${ENABLE_EMOJI:-true}
+      ENABLE_SCREEN_CONTEXT: ${ENABLE_SCREEN_CONTEXT:-true}
+      ENABLE_GAME_MODE: ${ENABLE_GAME_MODE:-true}
+      ENABLE_VISION: ${ENABLE_VISION:-true}
+      TTS_BACKEND_URL: ${TTS_BACKEND_URL:-}
+      IMAGE_BACKEND_URL: ${IMAGE_BACKEND_URL:-}
+      AIYA_PERFORMANCE_PROFILE: ${AIYA_PERFORMANCE_PROFILE:-auto}
+      AIYA_HARDWARE_CLASS: ${AIYA_HARDWARE_CLASS:-}
+      HOST_CONTROL_URL: ${HOST_CONTROL_URL:-http://host.docker.internal:8765}
+      HOST_CONTROL_TOKEN: ${HOST_CONTROL_TOKEN:-${AIYA_ADMIN_TOKEN}}
+      OLLAMA_CHAT_MODEL: ${OLLAMA_CHAT_MODEL:-}
+      OLLAMA_EMBED_MODEL: ${OLLAMA_EMBED_MODEL:-}
+      OLLAMA_VISION_MODEL: ${OLLAMA_VISION_MODEL:-}
+    depends_on:
+      db:
+        condition: service_healthy
+      ollama:
+        condition: service_started
+      ollama_setup:
+        condition: service_completed_successfully
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+      - "3000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5).read()"]
+      interval: 15s
+      timeout: 10s
+      retries: 8
+    volumes:
+      - .:/app
+
+  tg_bot:
+    build: .
+    container_name: aiya_tg
+    command: python tg_bot.py
+    restart: always
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      API_URL: http://api:8000
+      TELEGRAM_TOKEN: ${TELEGRAM_TOKEN}
+      AIYA_ADMIN_TOKEN: ${AIYA_ADMIN_TOKEN}
+      AIYA_EXTRA_ADMIN_TOKENS: ${AIYA_EXTRA_ADMIN_TOKENS:-}
+    env_file:
+      - .env
+    volumes:
+      - .:/app
+
+  webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: aiya_open_webui
+    restart: always
+    depends_on:
+      - ollama
+    environment:
+      OLLAMA_BASE_URL: http://ollama:11434
+      WEBUI_AUTH: "True"
+    ports:
+      - "3001:8080"
+    volumes:
+      - ./open_webui:/app/backend/data

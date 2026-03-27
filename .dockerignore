@@ -1,0 +1,10 @@
+venv/
+__pycache__/
+.git/
+.env
+*.mp4
+*.zip
+*.log
+postgres_data/
+ollama_storage/
+open_webui/

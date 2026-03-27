@@ -1,0 +1,369 @@
+<!doctype html>
+<html lang="uk">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Aiya Local</title>
+  <style>
+    :root {
+      --bg: #edf8ef;
+      --panel: rgba(255, 255, 255, 0.84);
+      --line: #b6d8bc;
+      --text: #14311d;
+      --muted: #4e6a56;
+      --accent: #2f9f57;
+      --accent-2: #86d98f;
+      --danger: #b04949;
+      --shadow: 0 24px 70px rgba(33, 76, 44, 0.14);
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "Segoe UI", sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(circle at top left, rgba(132, 229, 165, 0.35), transparent 28%),
+        radial-gradient(circle at right center, rgba(53, 151, 101, 0.18), transparent 24%),
+        linear-gradient(160deg, #f7fff8 0%, #edf8ef 46%, #dbeee0 100%);
+    }
+
+    .shell {
+      width: min(1120px, calc(100% - 32px));
+      margin: 24px auto;
+      display: grid;
+      grid-template-columns: 320px 1fr;
+      gap: 18px;
+    }
+
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(10px);
+    }
+
+    .side { padding: 22px; }
+    .main { padding: 18px; }
+    h1, h2, p { margin: 0; }
+    h1 { font-size: 32px; }
+    h2 { font-size: 15px; margin-bottom: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+    .lead { margin-top: 10px; color: var(--muted); line-height: 1.5; }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: rgba(134, 217, 143, 0.18);
+      font-size: 13px;
+      margin-top: 14px;
+    }
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 16px rgba(47, 159, 87, 0.5);
+    }
+    .stack { display: grid; gap: 14px; margin-top: 22px; }
+    .subcard {
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 14px;
+      background: rgba(255,255,255,0.62);
+    }
+    .status {
+      display: grid;
+      gap: 8px;
+      font-size: 14px;
+      color: var(--muted);
+    }
+    .status strong { color: var(--text); }
+    .controls {
+      display: grid;
+      gap: 10px;
+      margin-top: 12px;
+    }
+    button, input, textarea {
+      font: inherit;
+      border-radius: 16px;
+      border: 1px solid var(--line);
+    }
+    button {
+      padding: 12px 14px;
+      background: linear-gradient(135deg, var(--accent) 0%, #237444 100%);
+      color: white;
+      cursor: pointer;
+      transition: transform 120ms ease, opacity 120ms ease;
+    }
+    button.secondary {
+      background: white;
+      color: var(--text);
+    }
+    button:disabled { opacity: 0.6; cursor: wait; }
+    button:hover { transform: translateY(-1px); }
+    .main-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      padding: 8px 8px 16px;
+    }
+    .main-head p {
+      color: var(--muted);
+      max-width: 620px;
+      line-height: 1.5;
+    }
+    .chat {
+      display: grid;
+      gap: 14px;
+      min-height: 460px;
+      max-height: 62vh;
+      overflow: auto;
+      padding: 10px;
+      border-radius: 22px;
+      background: linear-gradient(180deg, rgba(255,255,255,0.68), rgba(231,246,235,0.82));
+      border: 1px solid var(--line);
+    }
+    .message {
+      max-width: 85%;
+      padding: 14px 16px;
+      border-radius: 18px;
+      white-space: pre-wrap;
+      line-height: 1.45;
+    }
+    .message.user {
+      justify-self: end;
+      background: #dff6e4;
+      border-bottom-right-radius: 6px;
+    }
+    .message.aiya {
+      background: white;
+      border-bottom-left-radius: 6px;
+    }
+    .composer {
+      display: grid;
+      gap: 12px;
+      margin-top: 14px;
+    }
+    textarea {
+      width: 100%;
+      min-height: 110px;
+      resize: vertical;
+      padding: 14px 16px;
+      background: rgba(255,255,255,0.88);
+    }
+    .meta {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+    }
+    input {
+      width: 100%;
+      padding: 12px 14px;
+      background: rgba(255,255,255,0.88);
+    }
+    .row {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .pill {
+      display: inline-block;
+      padding: 8px 10px;
+      border-radius: 999px;
+      background: rgba(134, 217, 143, 0.14);
+      border: 1px solid var(--line);
+      font-size: 13px;
+    }
+    .error { color: var(--danger); }
+    @media (max-width: 900px) {
+      .shell { grid-template-columns: 1fr; }
+      .meta { grid-template-columns: 1fr; }
+      .message { max-width: 100%; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <aside class="card side">
+      <h1>Aiya</h1>
+      <p class="lead">Локальний інтерфейс, який говорить саме з Aiya API, а не напряму з Ollama.</p>
+      <div class="badge"><span class="dot"></span><span id="health-label">Перевіряю стан...</span></div>
+
+      <div class="stack">
+        <div class="subcard">
+          <h2>Пам'ять</h2>
+          <div class="status">
+            <div><strong>Гноми пам'яті:</strong> факти, настрій, граф, screen/game модулі</div>
+            <div><strong>Граф:</strong> зберігається в PostgreSQL через `aiya_graph`</div>
+            <div><strong>Game mode:</strong> <span id="game-cap">перевіряю...</span></div>
+          </div>
+        </div>
+
+        <div class="subcard">
+          <h2>Сервіси</h2>
+          <div class="status" id="service-capabilities">Завантаження...</div>
+          <div class="controls">
+            <button id="start-telegram">Підняти Telegram</button>
+            <button id="refresh" class="secondary">Оновити статус</button>
+          </div>
+        </div>
+
+        <div class="subcard">
+          <h2>Швидкі дії</h2>
+          <div class="row">
+            <span class="pill">"підніми телеграм"</span>
+            <span class="pill">"підніми api"</span>
+            <span class="pill">"що ти пам'ятаєш?"</span>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <main class="card main">
+      <div class="main-head">
+        <div>
+          <h1 style="font-size:28px;">Чат з Aiya Core</h1>
+          <p>Цей чат іде в `/ask`, тому тут працюють пам'ять, граф, фічі користувача, screen context і керування локальними сервісами там, де це доступно.</p>
+        </div>
+      </div>
+
+      <div id="chat" class="chat"></div>
+
+      <div class="composer">
+        <div class="meta">
+          <input id="platform" placeholder="platform" value="web">
+          <input id="external-id" placeholder="external id">
+          <input id="user-name" placeholder="Ім'я" value="WebUser">
+        </div>
+        <textarea id="prompt" placeholder="Напиши щось Айї. Наприклад: підніми телеграм або згадай, що я просив раніше."></textarea>
+        <div class="row">
+          <button id="send">Надіслати</button>
+          <button id="clear" class="secondary">Очистити чат</button>
+        </div>
+        <div id="error" class="error"></div>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    const chat = document.getElementById("chat");
+    const errorBox = document.getElementById("error");
+    const promptBox = document.getElementById("prompt");
+    const platformBox = document.getElementById("platform");
+    const externalIdBox = document.getElementById("external-id");
+    const userNameBox = document.getElementById("user-name");
+    const sendButton = document.getElementById("send");
+    const refreshButton = document.getElementById("refresh");
+    const startTelegramButton = document.getElementById("start-telegram");
+
+    const storedId = localStorage.getItem("aiya-web-user-id") || String(Math.floor(100000 + Math.random() * 900000));
+    externalIdBox.value = storedId;
+    localStorage.setItem("aiya-web-user-id", storedId);
+
+    function addMessage(role, text) {
+      const item = document.createElement("div");
+      item.className = `message ${role}`;
+      item.textContent = text;
+      chat.appendChild(item);
+      chat.scrollTop = chat.scrollHeight;
+    }
+
+    async function loadStatus() {
+      errorBox.textContent = "";
+      try {
+        const [healthRes, gameRes, controlRes] = await Promise.all([
+          fetch("/health"),
+          fetch("/game/capabilities"),
+          fetch("/control/capabilities"),
+        ]);
+        const health = await healthRes.json();
+        const game = await gameRes.json();
+        const control = await controlRes.json();
+
+        document.getElementById("health-label").textContent =
+          `API ok, профіль ${health.performance}, Ollama: ${health.ollama_host}`;
+        document.getElementById("game-cap").textContent =
+          game.enabled ? "увімкнений у конфігу" : "вимкнений у конфігу";
+        document.getElementById("service-capabilities").innerHTML =
+          `<div><strong>Локальний контроль:</strong> ${control.mode}</div>
+           <div><strong>Docker CLI:</strong> ${control.docker_cli ? "є" : "нема"}</div>
+           <div><strong>Підтримка:</strong> ${control.supported_services.join(", ")}</div>`;
+      } catch (error) {
+        document.getElementById("health-label").textContent = "Не вдалося прочитати стан";
+        errorBox.textContent = error.message;
+      }
+    }
+
+    async function sendPrompt() {
+      const text = promptBox.value.trim();
+      if (!text) return;
+      errorBox.textContent = "";
+      sendButton.disabled = true;
+      addMessage("user", text);
+      promptBox.value = "";
+
+      try {
+        const response = await fetch("/ask", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            platform: platformBox.value.trim() || "web",
+            external_id: Number(externalIdBox.value.trim() || storedId),
+            user_name: userNameBox.value.trim() || "WebUser",
+            text
+          })
+        });
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data.detail || JSON.stringify(data));
+        }
+        addMessage("aiya", data.answer || "Немає відповіді");
+      } catch (error) {
+        addMessage("aiya", `Помилка: ${error.message}`);
+      } finally {
+        sendButton.disabled = false;
+      }
+    }
+
+    async function startTelegram() {
+      startTelegramButton.disabled = true;
+      errorBox.textContent = "";
+      try {
+        const response = await fetch("/control/services/telegram/start", { method: "POST" });
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data.detail || JSON.stringify(data));
+        }
+        addMessage("aiya", data.message || "Telegram start requested.");
+      } catch (error) {
+        addMessage("aiya", `Не вдалося підняти Telegram: ${error.message}`);
+      } finally {
+        startTelegramButton.disabled = false;
+        loadStatus();
+      }
+    }
+
+    document.getElementById("clear").addEventListener("click", () => {
+      chat.innerHTML = "";
+      errorBox.textContent = "";
+    });
+    sendButton.addEventListener("click", sendPrompt);
+    refreshButton.addEventListener("click", loadStatus);
+    startTelegramButton.addEventListener("click", startTelegram);
+    promptBox.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+        sendPrompt();
+      }
+    });
+
+    addMessage("aiya", "Aiya на місці. Тут працює саме локальний Aiya API.");
+    loadStatus();
+  </script>
+</body>
+</html>

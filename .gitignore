@@ -1,0 +1,9 @@
+/.env
+__pycache__/
+postgres_data/
+ollama_storage/
+open_webui/
+*.wav
+*.png
+build/
+dist/

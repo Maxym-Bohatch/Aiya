@@ -1,0 +1,12 @@
+aiogram==3.4.1
+requests
+psycopg2-binary
+fastapi
+uvicorn
+pydantic
+python-dotenv
+pgvector
+aiohttp
+Pillow
+pytesseract
+vgamepad
