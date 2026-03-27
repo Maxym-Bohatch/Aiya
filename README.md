@@ -26,15 +26,17 @@ Aiya is now structured as a Docker-first local assistant backend with:
   - `/emoji on`
   - `/emoji off`
 - image generation and TTS are wired as pluggable backends via `IMAGE_BACKEND_URL` and `TTS_BACKEND_URL`
-- higher-quality TTS can run through the built-in `edge-tts` provider or an external backend via `TTS_BACKEND_URL`
-- local offline `espeak-ng` fallback exists only as an explicit escape hatch when `AIYA_ALLOW_LOCAL_TTS=true`
+- higher-quality voice delivery works through `edge-tts` by default, with local fallback only when explicitly allowed
 - Telegram can send Aiya voice replies when `tts_enabled` is on for that user
-- `desktop_companion.py` gives a simple white-green avatar window, subtitle bubble, and optional OCR on the host machine
+- `desktop_companion.py` gives a non-topmost `Core` control window plus detached subtitle and character overlays on the host machine
 - `client/launcher.py` gives one GUI entry point for client config, health checks, admin token generation, Docker bridge control, wiki lookup, and opening the desktop companion
 - from the launcher, an admin can rotate Telegram token, database password, host token, main admin token, and assign extra admin tokens for other trusted admins
 - screen OCR can be stored as recent screen-context and mixed into Aiya's prompt
 - screenshot vision analysis can use a local Ollama vision model when available
 - game mode can observe the current screen summary and ask the core for next actions
+- the companion translator uses the backend `/translate` API, so split deployment works correctly from another PC
+- the client launcher can install extra Tesseract OCR language packs on the client PC
+- the companion can load a custom on-screen character from `AIYA_CHARACTER_ASSET`
 - local image generation can work even without a separate image backend
 - optional virtual gamepad support is used when `vgamepad` is available on the host
 - wiki lookup is available on the backend through a dedicated module and API
@@ -104,15 +106,13 @@ Hotkeys in desktop companion:
 - `F8`: capture screen once
 - `F9`: toggle OCR
 - `F10`: toggle game mode
-- `F11`: translate selected region
+- `F11`: choose a translation area
 
-Game mode notes:
+Custom companion character:
 
-- game mode needs current screen context before it can plan actions
-- the simplest flow is: set your game name, turn on `Screen Always`, then enable `Game On/Off`
-- if nothing happens yet, press `Capture Now` or `Game Step Now`
-- keyboard actions require the game window to be focused on the client PC
-- virtual gamepad actions require `vgamepad` / ViGEm on the client PC
+- set `AIYA_CHARACTER_ASSET` to a `.gif`, `.png`, `.webp`, `.jpg`, or a folder with `manifest.json` + `idle.gif`
+- set `AIYA_CHARACTER_DOCK=left` or `right`
+- subtitles stay in a light-green overlay near the bottom of the screen
 
 ## Workspace layout
 
@@ -237,7 +237,7 @@ Low:
 
 ```env
 AIYA_PERFORMANCE_PROFILE=low
-OLLAMA_CHAT_MODEL=llama3.2:1b
+OLLAMA_CHAT_MODEL=qwen2.5:1.5b
 OLLAMA_EMBED_MODEL=nomic-embed-text
 OLLAMA_VISION_MODEL=llava:7b
 ```
@@ -246,7 +246,7 @@ Balanced:
 
 ```env
 AIYA_PERFORMANCE_PROFILE=balanced
-OLLAMA_CHAT_MODEL=llama3.2:3b
+OLLAMA_CHAT_MODEL=qwen2.5:3b
 OLLAMA_EMBED_MODEL=nomic-embed-text
 OLLAMA_VISION_MODEL=llava:7b
 ```
@@ -255,7 +255,7 @@ High:
 
 ```env
 AIYA_PERFORMANCE_PROFILE=high
-OLLAMA_CHAT_MODEL=llama3.1:8b
+OLLAMA_CHAT_MODEL=qwen2.5:7b
 OLLAMA_EMBED_MODEL=nomic-embed-text
 OLLAMA_VISION_MODEL=llava:13b
 ```
@@ -298,12 +298,8 @@ OLLAMA_CHAT_MODEL=
 OLLAMA_EMBED_MODEL=
 OLLAMA_VISION_MODEL=
 TTS_BACKEND_URL=
-AIYA_TTS_PROVIDER=edge
-AIYA_TTS_RATE=+0%
-AIYA_TTS_PITCH=+0Hz
-AIYA_ALLOW_LOCAL_TTS=false
 IMAGE_BACKEND_URL=
-TTS_VOICE=uk-UA-PolinaNeural
+TTS_VOICE=uk+f3
 ```
 
 ## API

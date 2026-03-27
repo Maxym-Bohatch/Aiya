@@ -12,6 +12,7 @@
    - open the desktop companion window
    - ping API / host bridge
    - manage desktop feature flags
+   - install OCR language packs for Tesseract
    - use the wiki tab
 6. If you run from source instead of the packaged EXE, use `scripts/client/install_client_prereqs.ps1` first.
 7. For game mode, open the companion, set the game name, switch to `Screen Always`, then enable `Game On/Off`.
@@ -20,6 +21,8 @@ Recommended split:
 - Server PC: Docker, Ollama, PostgreSQL, Telegram, backend, rebuild scripts
 - Client PC: only the packaged client bundle
 - Client PC OCR needs local Tesseract installed on that same PC
+- Client PC translation uses the backend API, but OCR language packs still live on the client Tesseract install
+- `AIYA_CHARACTER_ASSET` can point to your own GIF/PNG or a folder with `manifest.json` + `idle.gif`
 
 Do not copy these server-only paths to the client PC:
 - `postgres_data`

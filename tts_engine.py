@@ -18,11 +18,18 @@ try:
 except Exception:
     edge_tts = None
 
+try:
+    from gtts import gTTS
+except Exception:
+    gTTS = None
+
 
 def voice_delivery_enabled() -> bool:
     if settings.tts_backend_url:
         return True
     if settings.tts_provider == "edge" and edge_tts is not None:
+        return True
+    if gTTS is not None:
         return True
     return os.getenv("AIYA_ALLOW_LOCAL_TTS", "").strip().lower() in {"1", "true", "yes", "on"}
 
@@ -39,12 +46,12 @@ def _fallback_wave(text: str, out_path: str):
         wav_file.setnchannels(1)
         wav_file.setsampwidth(2)
         wav_file.setframerate(sample_rate)
-        for i in range(total_frames):
-            t = i / sample_rate
-            freq = base + fib[(i // 3770) % len(fib)] * 16
-            shimmer = math.sin(2 * math.pi * (5 + fib[(i // 6100) % len(fib)] * 0.35) * t) * 7
-            overtone = math.sin(2 * math.pi * (freq * 2.0) * t) * 0.12
-            sample = int(amplitude * (math.sin(2 * math.pi * (freq + shimmer) * t) + overtone))
+        for index in range(total_frames):
+            moment = index / sample_rate
+            freq = base + fib[(index // 3770) % len(fib)] * 16
+            shimmer = math.sin(2 * math.pi * (5 + fib[(index // 6100) % len(fib)] * 0.35) * moment) * 7
+            overtone = math.sin(2 * math.pi * (freq * 2.0) * moment) * 0.12
+            sample = int(amplitude * (math.sin(2 * math.pi * (freq + shimmer) * moment) + overtone))
             wav_file.writeframes(struct.pack("<h", sample))
 
 
@@ -95,11 +102,7 @@ def _write_backend_json(payload: dict) -> tuple[str, str, str]:
 
 
 def _synthesize_via_backend(text: str) -> tuple[str, str, str]:
-    response = requests.post(
-        settings.tts_backend_url,
-        json={"text": text},
-        timeout=180,
-    )
+    response = requests.post(settings.tts_backend_url, json={"text": text}, timeout=180)
     response.raise_for_status()
     content_type = (response.headers.get("Content-Type") or "").lower()
     if content_type.startswith("audio/"):
@@ -125,6 +128,25 @@ def _synthesize_via_edge(text: str) -> tuple[str, str, str]:
     return str(out_path), "audio/mpeg", out_path.name
 
 
+def _gtts_language() -> str:
+    voice = (settings.tts_voice or "").lower()
+    if voice.startswith("uk-") or voice.startswith("uk_") or voice.startswith("uk"):
+        return "uk"
+    if voice.startswith("pl-") or voice.startswith("pl"):
+        return "pl"
+    if voice.startswith("ru-") or voice.startswith("ru"):
+        return "ru"
+    return "en"
+
+
+def _synthesize_via_gtts(text: str) -> tuple[str, str, str]:
+    if gTTS is None:
+        raise RuntimeError("gTTS is not installed.")
+    out_path = _prepare_output_path(".mp3")
+    gTTS(text=text, lang=_gtts_language(), slow=False).save(str(out_path))
+    return str(out_path), "audio/mpeg", out_path.name
+
+
 def synthesize_to_wav(text: str) -> str:
     audio_path, _, _ = synthesize_to_audio_file(text)
     return audio_path
@@ -144,14 +166,17 @@ def synthesize_to_audio_file(text: str) -> tuple[str, str, str]:
             return _synthesize_via_edge(prepared)
         except Exception as exc:
             print(f"Edge TTS error: {exc}")
+    try:
+        return _synthesize_via_gtts(prepared)
+    except Exception as exc:
+        print(f"gTTS error: {exc}")
 
     if not voice_delivery_enabled():
         raise RuntimeError(
-            "High-quality TTS backend is not configured. Set TTS_BACKEND_URL, keep AIYA_TTS_PROVIDER=edge with internet access, or explicitly allow the local fallback."
+            "High-quality TTS is not configured. Set TTS_BACKEND_URL, keep AIYA_TTS_PROVIDER=edge, or explicitly allow the local fallback."
         )
 
     out_path = _prepare_output_path(".wav")
-
     fib = [1, 2, 3, 5, 8, 13]
     rate = 136 + fib[len(prepared) % len(fib)] * 2
     pitch = 54 + fib[(len(prepared) + 2) % len(fib)] * 2
@@ -197,4 +222,5 @@ def tts_capabilities():
         "backend_url": bool(settings.tts_backend_url),
         "provider": settings.tts_provider,
         "edge_available": edge_tts is not None,
+        "gtts_available": gTTS is not None,
     }

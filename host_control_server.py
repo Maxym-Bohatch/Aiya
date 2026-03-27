@@ -32,6 +32,14 @@ ALLOWED_CONFIG_KEYS = {
     "OLLAMA_CHAT_MODEL",
     "OLLAMA_EMBED_MODEL",
     "OLLAMA_VISION_MODEL",
+    "AIYA_TRANSLATION_MODEL",
+    "AIYA_TTS_PROVIDER",
+    "TTS_VOICE",
+    "AIYA_TTS_RATE",
+    "AIYA_TTS_PITCH",
+    "AIYA_ALLOW_LOCAL_TTS",
+    "TRANSLATION_BACKEND_URL",
+    "TTS_BACKEND_URL",
 }
 SERVICE_COMMANDS = {
     "telegram": ["docker", "compose", "up", "-d", "api", "tg_bot"],

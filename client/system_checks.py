@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import subprocess
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
@@ -38,6 +39,24 @@ def find_tesseract_path(configured_path: str = "") -> Path | None:
 
 def _module_present(module_name: str) -> bool:
     return importlib.util.find_spec(module_name) is not None
+
+
+def list_tesseract_languages(configured_path: str = "") -> list[str]:
+    executable = find_tesseract_path(configured_path)
+    if executable is None:
+        return []
+    try:
+        completed = subprocess.run(
+            [str(executable), "--list-langs"],
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=True,
+        )
+        lines = [line.strip() for line in completed.stdout.splitlines()]
+        return [line for line in lines if line and "languages" not in line.lower()]
+    except Exception:
+        return []
 
 
 def run_client_checks(values: dict[str, str]) -> list[CheckResult]:
@@ -82,6 +101,13 @@ def run_client_checks(values: dict[str, str]) -> list[CheckResult]:
             ok=_module_present("vgamepad"),
             summary="vgamepad is available for virtual controller mode." if _module_present("vgamepad") else "vgamepad is not installed.",
             details="Optional. Only needed for virtual gamepad control.",
+            optional=True,
+        ),
+        CheckResult(
+            name="edge-tts",
+            ok=_module_present("edge_tts"),
+            summary="edge-tts is available for better voice replies." if _module_present("edge_tts") else "edge-tts is not installed in this Python environment.",
+            details="Optional for source mode, but recommended if you want local client-side TTS diagnostics to match the server setup.",
             optional=True,
         ),
         CheckResult(

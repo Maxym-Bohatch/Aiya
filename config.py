@@ -66,7 +66,7 @@ class PerformanceProfile:
 PROFILES = {
     "low": PerformanceProfile(
         name="low",
-        chat_model=os.getenv("OLLAMA_CHAT_MODEL_LOW", "llama3.2:1b"),
+        chat_model=os.getenv("OLLAMA_CHAT_MODEL_LOW", "qwen2.5:1.5b"),
         embed_model=os.getenv("OLLAMA_EMBED_MODEL_LOW", "nomic-embed-text"),
         vision_model=os.getenv("OLLAMA_VISION_MODEL_LOW", "llava:7b"),
         context_memories=4,
@@ -78,7 +78,7 @@ PROFILES = {
     ),
     "balanced": PerformanceProfile(
         name="balanced",
-        chat_model=os.getenv("OLLAMA_CHAT_MODEL_BALANCED", "llama3.2:3b"),
+        chat_model=os.getenv("OLLAMA_CHAT_MODEL_BALANCED", "qwen2.5:3b"),
         embed_model=os.getenv("OLLAMA_EMBED_MODEL_BALANCED", "nomic-embed-text"),
         vision_model=os.getenv("OLLAMA_VISION_MODEL_BALANCED", "llava:7b"),
         context_memories=8,
@@ -90,7 +90,7 @@ PROFILES = {
     ),
     "high": PerformanceProfile(
         name="high",
-        chat_model=os.getenv("OLLAMA_CHAT_MODEL_HIGH", "llama3.1:8b"),
+        chat_model=os.getenv("OLLAMA_CHAT_MODEL_HIGH", "qwen2.5:7b"),
         embed_model=os.getenv("OLLAMA_EMBED_MODEL_HIGH", "nomic-embed-text"),
         vision_model=os.getenv("OLLAMA_VISION_MODEL_HIGH", "llava:13b"),
         context_memories=12,
@@ -126,7 +126,7 @@ def select_profile_name() -> str:
         return requested
     hardware = detect_hardware_class()
     if hardware == "cpu":
-        return "low"
+        return "balanced"
     if hardware in {"intel", "amd"}:
         return "balanced"
     return "high"
@@ -147,10 +147,7 @@ class AppConfig:
     extra_admin_tokens: tuple[str, ...] = _env_token_list("AIYA_EXTRA_ADMIN_TOKENS")
     image_backend_url: str = (os.getenv("IMAGE_BACKEND_URL") or "").rstrip("/")
     tts_backend_url: str = (os.getenv("TTS_BACKEND_URL") or "").rstrip("/")
-    tts_provider: str = (os.getenv("AIYA_TTS_PROVIDER") or "edge").strip().lower()
-    tts_voice: str = (os.getenv("TTS_VOICE") or "uk-UA-PolinaNeural").strip()
-    tts_rate: str = (os.getenv("AIYA_TTS_RATE") or "+0%").strip()
-    tts_pitch: str = (os.getenv("AIYA_TTS_PITCH") or "+0Hz").strip()
+    translation_backend_url: str = (os.getenv("TRANSLATION_BACKEND_URL") or "").rstrip("/")
     host_control_url: str = (os.getenv("HOST_CONTROL_URL") or "http://host.docker.internal:8765").rstrip("/")
     host_control_token: str = (os.getenv("HOST_CONTROL_TOKEN") or os.getenv("AIYA_ADMIN_TOKEN") or "").strip()
     client_mode: str = (os.getenv("AIYA_CLIENT_MODE") or "desktop").strip().lower()
@@ -158,6 +155,15 @@ class AppConfig:
     client_external_id: int = int((os.getenv("AIYA_CLIENT_EXTERNAL_ID") or "900001").strip())
     client_platform: str = (os.getenv("AIYA_CLIENT_PLATFORM") or "desktop").strip()
     tesseract_cmd: str = (os.getenv("AIYA_TESSERACT_CMD") or "").strip()
+    ocr_languages: str = (os.getenv("AIYA_OCR_LANGS") or "ukr+eng").strip()
+    client_translation_source_lang: str = (os.getenv("AIYA_TRANSLATION_SOURCE_LANG") or "auto").strip()
+    client_translation_target_lang: str = (os.getenv("AIYA_TRANSLATION_TARGET_LANG") or "uk").strip()
+    character_asset: str = (os.getenv("AIYA_CHARACTER_ASSET") or "").strip()
+    character_dock: str = (os.getenv("AIYA_CHARACTER_DOCK") or "right").strip().lower()
+    character_scale: float = float((os.getenv("AIYA_CHARACTER_SCALE") or "1.0").strip())
+    subtitle_overlay_enabled: bool = _as_bool("AIYA_SUBTITLE_OVERLAY", True)
+    character_overlay_enabled: bool = _as_bool("AIYA_CHARACTER_OVERLAY", True)
+    subtitle_color: str = (os.getenv("AIYA_SUBTITLE_COLOR") or "#a8ff9c").strip()
     enable_tts: bool = _as_bool("ENABLE_TTS", True)
     enable_ocr: bool = _as_bool("ENABLE_OCR", False)
     enable_image_generation: bool = _as_bool("ENABLE_IMAGE_GENERATION", False)
@@ -167,6 +173,11 @@ class AppConfig:
     enable_game_mode: bool = _as_bool("ENABLE_GAME_MODE", True)
     enable_vision: bool = _as_bool("ENABLE_VISION", True)
     enable_wiki: bool = _as_bool("ENABLE_WIKI", True)
+    tts_provider: str = (os.getenv("AIYA_TTS_PROVIDER") or "edge").strip().lower()
+    tts_voice: str = (os.getenv("TTS_VOICE") or "uk-UA-PolinaNeural").strip()
+    tts_rate: str = (os.getenv("AIYA_TTS_RATE") or "+0%").strip()
+    tts_pitch: str = (os.getenv("AIYA_TTS_PITCH") or "+0Hz").strip()
+    translation_model_name: str = (os.getenv("AIYA_TRANSLATION_MODEL") or "").strip()
     hardware_class: str = detect_hardware_class()
     performance_profile_name: str = select_profile_name()
 
@@ -185,6 +196,10 @@ class AppConfig:
     @property
     def ollama_vision_model(self) -> str:
         return _env_or_default("OLLAMA_VISION_MODEL", self.performance.vision_model)
+
+    @property
+    def translation_model(self) -> str:
+        return self.translation_model_name or self.ollama_chat_model
 
 
 settings = AppConfig()

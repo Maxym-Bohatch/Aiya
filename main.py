@@ -1,10 +1,10 @@
 from pathlib import Path
 from typing import Optional
 
+import uvicorn
 from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel
-import uvicorn
 
 import brain
 import database as db
@@ -15,7 +15,7 @@ import wiki_engine
 from config import settings
 from tts_engine import synthesize_to_audio_file, tts_capabilities, voice_delivery_enabled
 
-app = FastAPI(title="Aiya Core", version="4.0")
+app = FastAPI(title="Aiya Core", version="4.3")
 
 
 class Query(BaseModel):
@@ -99,18 +99,92 @@ UI_PATH = Path(__file__).with_name("webui.html")
 def coding_prompt_addon(text: str) -> str:
     normalized = (text or "").lower()
     keywords = [
-        "python", "java", "код", "script", "скрипт", "fastapi", "class",
-        "exception", "traceback", "bug", "debug", "json", "csv",
-        "sql", "алгоритм", "program", "програма", "програм", "функц",
+        "python",
+        "java",
+        "код",
+        "script",
+        "скрипт",
+        "fastapi",
+        "class",
+        "exception",
+        "traceback",
+        "bug",
+        "debug",
+        "json",
+        "csv",
+        "sql",
+        "алгоритм",
+        "program",
+        "програма",
+        "програм",
+        "функц",
     ]
     if any(keyword in normalized for keyword in keywords):
         return (
-            "Це кодовий запит. Дай практичну відповідь: спочатку готовий або майже готовий "
-            "код, потім коротко поясни ключові рядки і як це запустити або перевірити. "
-            "Особливо якісно підтримуй Python і Java. Не став зайвих зустрічних питань, "
-            "якщо можна зробити розумне припущення."
+            "Це кодовий запит. Дай практичну відповідь: спочатку готовий або майже готовий код, "
+            "потім коротко поясни ключові рядки і як це запустити або перевірити. "
+            "Особливо якісно підтримуй Python і Java. Не став зайвих уточнень, якщо можна зробити розумне припущення."
         )
     return ""
+
+
+def coding_language_hint(text: str) -> str:
+    normalized = (text or "").lower()
+    for candidate in ("python", "java", "javascript", "typescript", "bash", "powershell", "sql"):
+        if candidate in normalized:
+            return candidate
+    if "пайтон" in normalized:
+        return "python"
+    return ""
+
+
+def build_coding_answer(user_text: str) -> str:
+    language_hint = coding_language_hint(user_text) or "follow the user's request"
+    prompt = (
+        "You are a careful senior developer.\n"
+        "Solve the user's request with one complete code block only.\n"
+        "Rules:\n"
+        "- Return only the code block.\n"
+        "- Make it runnable.\n"
+        "- Do not add prose outside the code block.\n"
+        "- Keep the solution compact but complete.\n"
+        "- Follow the user's requested task exactly.\n"
+        "- Do not invent sample data, extra files, or setup unless the user explicitly asked for them.\n"
+        "- If the task is to read a JSON file and print a field, open the existing file and print that field.\n"
+        f"- Language hint: {language_hint}.\n\n"
+        f"User request:\n{user_text}"
+    )
+    code_only = brain.ask_aiya(
+        prompt,
+        timeout_seconds=min(settings.performance.llm_timeout_seconds, 120),
+        temperature=0.15,
+        num_predict=220,
+    ).strip()
+    if "```" in code_only:
+        return f"Ось компактний робочий варіант:\n\n{code_only}"
+    return ""
+
+
+def build_general_answer(user_text: str) -> str:
+    translated_request = translation_engine.translate_text(user_text, source_lang="auto", target_lang="en")
+    request_for_model = (translated_request.get("translation") or user_text).strip()
+    prompt = (
+        "You are Aiya, a helpful assistant.\n"
+        "Answer briefly, clearly, and practically in English.\n"
+        "Do not mention translation, OCR, or unrelated problems.\n"
+        "If the question is simple, answer simply.\n\n"
+        f"User request: {request_for_model}"
+    )
+    answer_en = brain.ask_aiya(
+        prompt,
+        timeout_seconds=min(settings.performance.llm_timeout_seconds, 90),
+        temperature=0.2,
+        num_predict=160,
+    ).strip()
+    if not answer_en:
+        return ""
+    translated_answer = translation_engine.translate_text(answer_en, source_lang="auto", target_lang="uk")
+    return (translated_answer.get("translation") or answer_en).strip()
 
 
 async def get_aiya_token(x_aiya_token: str = Header(default=None)):
@@ -125,16 +199,12 @@ def background_processing_task(internal_id: int, user_name: str, text: str, leve
             fact_level = fact_obj.get("level", level) if isinstance(fact_obj, dict) else level
             if not fact_text:
                 continue
-            vec = brain.get_embedding(fact_text)
-            db.save_fact(internal_id, fact_text, vec, level=fact_level)
+            vector = brain.get_embedding(fact_text)
+            db.save_fact(internal_id, fact_text, vector, level=fact_level)
 
         graph_data = brain.extract_entities_and_relations(text)
         if graph_data.get("to_add") or graph_data.get("to_remove"):
-            db.update_graph(
-                internal_id,
-                graph_data.get("to_add", []),
-                graph_data.get("to_remove", []),
-            )
+            db.update_graph(internal_id, graph_data.get("to_add", []), graph_data.get("to_remove", []))
 
         history = db.get_recent_logs(internal_id, limit=settings.performance.recent_logs)
         mood_report = brain.update_aiya_mood(user_name, history)
@@ -143,8 +213,8 @@ def background_processing_task(internal_id: int, user_name: str, text: str, leve
             mood_report.get("mood", "stable"),
             mood_report.get("prompt_addon", ""),
         )
-    except Exception as e:
-        print(f"Background task error: {e}")
+    except Exception as exc:
+        print(f"Background task error: {exc}")
 
 
 @app.on_event("startup")
@@ -170,6 +240,9 @@ def health():
         },
         "performance": settings.performance.name,
         "hardware_class": settings.hardware_class,
+        "chat_model": settings.ollama_chat_model,
+        "translation_model": settings.translation_model,
+        "tts": tts_capabilities(),
         "service_control": service_control.capabilities(include_remote=False),
     }
 
@@ -224,17 +297,10 @@ async def ask_aiya(query: Query, background_tasks: BackgroundTasks, x_token: str
             prompt_addon = f"{prompt_addon}\n{coding_addon}".strip()
         user_settings = db.get_user_settings(internal_id)
 
-        system_prompt = brain.build_system_prompt(
-            user_summary=user_summary,
-            current_mood=current_mood,
-            prompt_addon=prompt_addon,
-            memories=memories,
-            recent_logs=recent_logs,
-            user_level=user_level,
-            screen_context=screen_context,
-        )
-        full_prompt = f'{system_prompt}\nЗАПИТ КОРИСТУВАЧА: "{query.text}"'
-        answer = brain.ask_aiya(full_prompt).strip()
+        if coding_addon:
+            answer = build_coding_answer(query.text)
+        else:
+            answer = build_general_answer(query.text)
         if not answer:
             answer = "Я трохи зависла. Спробуй перефразувати або повторити запит."
 
@@ -248,16 +314,16 @@ async def ask_aiya(query: Query, background_tasks: BackgroundTasks, x_token: str
             "answer": answer,
             "user_id": internal_id,
             "features": user_settings,
-            "tts_available": bool(user_settings.get("tts_enabled", False)) and bool(
-                (settings.enable_tts or settings.tts_backend_url) and voice_delivery_enabled()
-            ),
+            "tts_available": bool(user_settings.get("tts_enabled", False))
+            and bool((settings.enable_tts or settings.tts_backend_url) and voice_delivery_enabled()),
             "image_generation_available": settings.enable_image_generation and user_settings.get("image_generation_enabled", False),
+            "chat_model": settings.ollama_chat_model,
         }
     except HTTPException:
         raise
-    except Exception as e:
-        print(f"Critical API error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as exc:
+        print(f"Critical API error: {exc}")
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 @app.get("/users/{platform}/{external_id}/features")
@@ -273,10 +339,7 @@ def patch_features(platform: str, external_id: int, patch: FeaturePatch):
     user_id = db.get_internal_user(platform, external_id, platform)
     if user_id is None:
         raise HTTPException(status_code=404, detail="User not found")
-    if hasattr(patch, "model_dump"):
-        updates = patch.model_dump(exclude_none=True)
-    else:
-        updates = patch.dict(exclude_none=True)
+    updates = patch.model_dump(exclude_none=True) if hasattr(patch, "model_dump") else patch.dict(exclude_none=True)
     return db.update_user_settings(user_id, updates)
 
 
@@ -287,8 +350,7 @@ def set_consent(payload: ConsentPatch, x_token: str = Depends(get_aiya_token)):
     if owner_id is None or grantee_id is None:
         raise HTTPException(status_code=404, detail="User mapping failed")
 
-    is_admin = db.get_token_level(owner_id, x_token) >= 10
-    if not is_admin:
+    if db.get_token_level(owner_id, x_token) < 10:
         raise HTTPException(status_code=403, detail="Only admin can manage cross-user consent right now")
 
     db.upsert_consent(owner_id, grantee_id, payload.can_access_private)
@@ -336,12 +398,7 @@ def game_plan(payload: GameSessionRequest):
         raise HTTPException(status_code=404, detail="User not found")
 
     session_id = db.create_or_get_game_session(user_id, payload.game_name, payload.goal)
-    db.log_game_event(
-        session_id,
-        event_type="screen",
-        screen_summary=payload.screen_summary,
-        outcome="observed",
-    )
+    db.log_game_event(session_id, event_type="screen", screen_summary=payload.screen_summary, outcome="observed")
     recent_events = db.get_recent_game_events(session_id, limit=8)
     plan = game_agent.build_game_action_plan(
         payload.game_name,
@@ -381,11 +438,7 @@ def image_file(payload: ImageRequest):
         raise HTTPException(status_code=502, detail=result["error"])
     result_data = result.get("result", {})
     if result_data.get("mode") == "local" and result_data.get("path"):
-        return FileResponse(
-            result_data["path"],
-            media_type="image/png",
-            filename="aiya_image.png",
-        )
+        return FileResponse(result_data["path"], media_type="image/png", filename="aiya_image.png")
     raise HTTPException(status_code=501, detail="Remote image backend does not expose a local file")
 
 
@@ -407,11 +460,7 @@ def synthesize_file(payload: SpeechRequest):
         audio_path, media_type, filename = synthesize_to_audio_file(payload.text)
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
-    return FileResponse(
-        audio_path,
-        media_type=media_type,
-        filename=filename,
-    )
+    return FileResponse(audio_path, media_type=media_type, filename=filename)
 
 
 @app.get("/speech/capabilities")

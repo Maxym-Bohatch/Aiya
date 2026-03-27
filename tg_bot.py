@@ -1,4 +1,4 @@
-﻿import asyncio
+import asyncio
 
 import aiohttp
 from aiogram import Bot, Dispatcher, types
@@ -15,6 +15,7 @@ FEATURES_URL = f"{settings.api_url}/users"
 IMAGE_URL = f"{settings.api_url}/image/generate"
 IMAGE_FILE_URL = f"{settings.api_url}/image/file"
 SPEECH_URL = f"{settings.api_url}/speech/file"
+SPEECH_CAPABILITIES_URL = f"{settings.api_url}/speech/capabilities"
 
 FEATURE_COMMANDS = {
     "tts": "tts_enabled",
@@ -51,9 +52,60 @@ async def get_features(message: types.Message):
             return "\n".join(lines)
 
 
+async def get_tts_status():
+    async with aiohttp.ClientSession() as session:
+        async with session.get(SPEECH_CAPABILITIES_URL, timeout=60) as response:
+            if response.status != 200:
+                return "TTS capabilities недоступні."
+            payload = await response.json()
+            return (
+                "TTS capabilities:\n"
+                f"- provider: {payload.get('provider')}\n"
+                f"- voice: {payload.get('voice')}\n"
+                f"- delivery_enabled: {payload.get('delivery_enabled')}\n"
+                f"- edge_available: {payload.get('edge_available')}"
+            )
+
+
+async def send_speech_reply(message: types.Message, session: aiohttp.ClientSession, text: str):
+    async with session.post(SPEECH_URL, json={"text": text}, timeout=180) as response:
+        if response.status != 200:
+            detail = await response.text()
+            await message.answer(f"TTS недоступний: {detail}")
+            return
+        audio_bytes = await response.read()
+        content_type = (response.headers.get("Content-Type") or "").lower()
+
+    if "ogg" in content_type:
+        voice = BufferedInputFile(audio_bytes, filename="aiya_reply.ogg")
+        await message.answer_voice(voice, caption="Голос Айї")
+        return
+    if "mpeg" in content_type or "mp3" in content_type:
+        audio = BufferedInputFile(audio_bytes, filename="aiya_reply.mp3")
+        await message.answer_audio(audio, caption="Голос Айї")
+        return
+    audio = BufferedInputFile(audio_bytes, filename="aiya_reply.wav")
+    await message.answer_audio(audio, caption="Голос Айї")
+
+
 @dp.message(Command("features"))
 async def handle_features(message: types.Message):
     await message.answer(await get_features(message))
+
+
+@dp.message(Command("tts_status"))
+async def handle_tts_status(message: types.Message):
+    await message.answer(await get_tts_status())
+
+
+@dp.message(Command("speak"))
+async def handle_speak(message: types.Message, command: CommandObject):
+    text = (command.args or "").strip()
+    if not text:
+        await message.answer("Використання: /speak текст для озвучення")
+        return
+    async with aiohttp.ClientSession() as session:
+        await send_speech_reply(message, session, text)
 
 
 @dp.message(Command("help"))
@@ -62,6 +114,8 @@ async def handle_help(message: types.Message):
         "Команди:\n"
         "/features\n"
         "/tts on|off\n"
+        "/tts_status\n"
+        "/speak <текст>\n"
         "/emoji on|off\n"
         "/ocr on|off\n"
         "/subtitles on|off\n"
@@ -98,7 +152,6 @@ async def handle_tg_message(message: types.Message):
                     image = BufferedInputFile(image_bytes, filename="aiya_image.png")
                     await message.answer_photo(image, caption=f"Картинка для: {prompt}")
                     return
-
             async with session.post(IMAGE_URL, json={"prompt": prompt}, timeout=180) as response:
                 if response.status != 200:
                     detail = await response.text()
@@ -128,21 +181,9 @@ async def handle_tg_message(message: types.Message):
                 await message.answer(answer)
 
                 if data.get("tts_available"):
-                    async with session.post(SPEECH_URL, json={"text": answer}, timeout=180) as speech_response:
-                        if speech_response.status == 200:
-                            audio_bytes = await speech_response.read()
-                            content_type = (speech_response.headers.get("Content-Type") or "").lower()
-                            if "ogg" in content_type:
-                                audio = BufferedInputFile(audio_bytes, filename="aiya_reply.ogg")
-                                await message.answer_voice(audio, caption="Голос Айї")
-                            elif "mpeg" in content_type or "mp3" in content_type:
-                                audio = BufferedInputFile(audio_bytes, filename="aiya_reply.mp3")
-                                await message.answer_audio(audio, caption="Голос Айї")
-                            else:
-                                audio = BufferedInputFile(audio_bytes, filename="aiya_reply.wav")
-                                await message.answer_audio(audio, caption="Голос Айї")
-    except Exception as e:
-        await message.answer(f"Помилка зв'язку з ядром: {e}")
+                    await send_speech_reply(message, session, answer)
+    except Exception as exc:
+        await message.answer(f"Помилка зв'язку з ядром: {exc}")
 
 
 async def main():

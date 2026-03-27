@@ -65,15 +65,9 @@ def start_service(service_name: str) -> dict:
             "message": output or f"Requested start for {normalized}.",
         }
     except subprocess.TimeoutExpired:
-        return {
-            "ok": False,
-            "message": f"Starting {normalized} timed out.",
-        }
+        return {"ok": False, "message": f"Starting {normalized} timed out."}
     except Exception as exc:
-        return {
-            "ok": False,
-            "message": f"Failed to start {normalized}: {exc}",
-        }
+        return {"ok": False, "message": f"Failed to start {normalized}: {exc}"}
 
 
 def handle_text_command(text: str) -> str:
@@ -98,13 +92,9 @@ def handle_text_command(text: str) -> str:
     ]
 
     if any(phrase in normalized for phrase in telegram_phrases):
-        result = start_service("telegram")
-        return result["message"]
-
+        return start_service("telegram")["message"]
     if any(phrase in normalized for phrase in api_phrases):
-        result = start_service("api")
-        return result["message"]
-
+        return start_service("api")["message"]
     return ""
 
 
@@ -125,12 +115,7 @@ def _host_request(method: str, path: str) -> dict:
         headers["X-Aiya-Host-Token"] = settings.host_control_token
 
     try:
-        response = requests.request(
-            method,
-            f"{settings.host_control_url}{path}",
-            headers=headers,
-            timeout=15,
-        )
+        response = requests.request(method, f"{settings.host_control_url}{path}", headers=headers, timeout=15)
         data = response.json()
         if isinstance(data, dict):
             data.setdefault("ok", response.ok)

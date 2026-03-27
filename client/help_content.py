@@ -7,6 +7,9 @@
 - Host Control URL: host bridge for Docker control, for example http://127.0.0.1:8765 or http://192.168.0.10:8765
 - Host Control Token: token required by the host bridge
 - Tesseract Path: local path to tesseract.exe on the client PC
+- OCR Languages: for example ukr+eng
+- Translation From / To: source and target language for the overlay translator
+- Character Asset: optional path to your own PNG/GIF or a folder with manifest.json + idle.gif
 
 2. What this client does
 - starts the desktop companion window
@@ -39,9 +42,11 @@
 
 6. Notes
 - OCR requires Tesseract installed on the client PC; set AIYA_TESSERACT_CMD if it is not in PATH
+- use "Install OCR Langs" if you need extra tesseract language packs on the client PC
 - if you run from source, use the launcher's "Install Python Deps" button or scripts/client/install_client_prereqs.ps1
 - game mode needs fresh screen context; turn on Screen Always or press Capture Now before expecting actions
 - the default recommended TTS path is AIYA_TTS_PROVIDER=edge with a neural voice such as uk-UA-PolinaNeural
 - gamepad mode requires ViGEm / vgamepad support on the client PC
 - wiki module works on the backend side and needs outbound internet from the server side if you use public Wikipedia
+- animated character overlays work best with GIF files or a folder that contains manifest.json and idle.gif
 """

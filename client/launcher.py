@@ -14,12 +14,13 @@ import requests
 
 from client.env_tools import ensure_defaults, generate_secure_token, parse_env_file, save_env_file
 from client.help_content import HELP_TEXT
-from client.system_checks import CheckResult, find_tesseract_path, format_check_report, run_client_checks
+from client.system_checks import CheckResult, find_tesseract_path, format_check_report, list_tesseract_languages, run_client_checks
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG_PATH = PROJECT_ROOT / ".env.client"
 EXAMPLE_CONFIG_PATH = PROJECT_ROOT / ".env.client.example"
 CLIENT_PREREQS_SCRIPT = PROJECT_ROOT / "scripts" / "client" / "install_client_prereqs.ps1"
+OCR_LANGS_SCRIPT = PROJECT_ROOT / "scripts" / "client" / "install_tesseract_langs.ps1"
 os.environ.setdefault("AIYA_ENV_FILE", str(DEFAULT_CONFIG_PATH))
 
 DEFAULTS = {
@@ -35,6 +36,14 @@ DEFAULTS = {
     "AIYA_CLIENT_EXTERNAL_ID": "900001",
     "AIYA_CLIENT_PLATFORM": "desktop",
     "AIYA_TESSERACT_CMD": "",
+    "AIYA_OCR_LANGS": "ukr+eng",
+    "AIYA_TRANSLATION_SOURCE_LANG": "auto",
+    "AIYA_TRANSLATION_TARGET_LANG": "uk",
+    "AIYA_CHARACTER_ASSET": "",
+    "AIYA_CHARACTER_DOCK": "right",
+    "AIYA_CHARACTER_SCALE": "1.0",
+    "AIYA_SUBTITLE_OVERLAY": "true",
+    "AIYA_CHARACTER_OVERLAY": "true",
 }
 
 FEATURE_FIELDS = [
@@ -57,6 +66,12 @@ SERVER_SECRET_FIELDS = [
     ("AIYA_TTS_PITCH", "TTS Pitch"),
     ("AIYA_ALLOW_LOCAL_TTS", "Allow Local TTS"),
     ("OLLAMA_CHAT_MODEL", "Chat Model"),
+    ("AIYA_TRANSLATION_MODEL", "Translation Model"),
+    ("AIYA_TTS_PROVIDER", "TTS Provider"),
+    ("TTS_VOICE", "TTS Voice"),
+    ("AIYA_TTS_RATE", "TTS Rate"),
+    ("AIYA_TTS_PITCH", "TTS Pitch"),
+    ("AIYA_ALLOW_LOCAL_TTS", "Allow Local TTS"),
 ]
 
 
@@ -120,6 +135,7 @@ class AiyaClientLauncher:
             ("Ping API", self.check_api_health),
             ("Ping Host Bridge", self.check_host_bridge),
             ("Install Tesseract", self.install_tesseract),
+            ("Install OCR Langs", self.install_ocr_languages),
             ("Install Python Deps", self.install_client_requirements),
             ("Open Companion", self.open_companion),
             ("Close Companion", self.close_companion),
@@ -177,6 +193,12 @@ class AiyaClientLauncher:
             ("Open WebUI URL", "REMOTE_OPEN_WEBUI_URL"),
             ("Host Control URL", "HOST_CONTROL_URL"),
             ("Tesseract Path", "AIYA_TESSERACT_CMD"),
+            ("OCR Languages", "AIYA_OCR_LANGS"),
+            ("Translation From", "AIYA_TRANSLATION_SOURCE_LANG"),
+            ("Translation To", "AIYA_TRANSLATION_TARGET_LANG"),
+            ("Character Asset", "AIYA_CHARACTER_ASSET"),
+            ("Character Dock", "AIYA_CHARACTER_DOCK"),
+            ("Character Scale", "AIYA_CHARACTER_SCALE"),
             ("Client Mode", "AIYA_CLIENT_MODE"),
         ]
         for index, (label, key) in enumerate(rows):
@@ -189,7 +211,8 @@ class AiyaClientLauncher:
         info.insert(
             "1.0",
             "Use localhost when client and server are on the same PC. Use a LAN or Hamachi IP for split deployment.\n\n"
-            "Tesseract is used for OCR. Hotkeys in companion: F8 capture, F9 OCR, F10 game, F11 translation area.\n\n"
+            "Tesseract is used for OCR. Set OCR languages like ukr+eng, and translation languages like auto -> uk.\n\n"
+            "Hotkeys in companion: F8 capture, F9 OCR, F10 game, F11 translation area.\n\n"
             "Run 'Check Client Setup' after changing machines so the launcher can spot missing Tesseract or Python dependencies.",
         )
 
@@ -330,6 +353,9 @@ class AiyaClientLauncher:
         if detected and not values.get("AIYA_TESSERACT_CMD", "").strip():
             self.connection_vars["AIYA_TESSERACT_CMD"].set(str(detected))
         report = format_check_report(self.latest_checks)
+        languages = list_tesseract_languages(values.get("AIYA_TESSERACT_CMD", ""))
+        if languages:
+            report += "\n\nDetected OCR languages:\n" + "\n".join(f"- {lang}" for lang in languages)
         self._set_diagnostics_output(report)
         missing_required = [check.name for check in self.latest_checks if not check.ok and not check.optional]
         if missing_required:
@@ -439,6 +465,31 @@ class AiyaClientLauncher:
             )
         except Exception as exc:
             self._append_log(f"Failed to launch Tesseract install: {exc}")
+
+    def install_ocr_languages(self):
+        if not OCR_LANGS_SCRIPT.exists():
+            self._append_log("OCR language installer script is missing.")
+            return
+        langs = self.connection_vars["AIYA_OCR_LANGS"].get().strip() or "ukr+eng"
+        self._append_log(f"Installing OCR language packs for: {langs}")
+        try:
+            subprocess.Popen(
+                [
+                    "powershell",
+                    "-NoProfile",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                    str(OCR_LANGS_SCRIPT),
+                    "-Langs",
+                    langs,
+                ],
+                cwd=str(PROJECT_ROOT),
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except Exception as exc:
+            self._append_log(f"Failed to launch OCR language installer: {exc}")
 
     def load_desktop_features(self):
         def action():

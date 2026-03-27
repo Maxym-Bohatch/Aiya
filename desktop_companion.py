@@ -1,12 +1,16 @@
-﻿import base64
+import base64
 import ctypes
+import ctypes.wintypes as wintypes
 import io
+import json
 import math
+import os
 import tempfile
 import threading
 import time
 import tkinter as tk
 from dataclasses import dataclass
+from pathlib import Path
 from tkinter import ttk
 
 try:
@@ -18,12 +22,14 @@ import requests
 
 from config import settings
 from game_control import get_backend
-from translation_engine import translate_text
 
 try:
-    from PIL import ImageGrab
+    from PIL import Image, ImageGrab, ImageSequence, ImageTk
 except Exception:
+    Image = None
     ImageGrab = None
+    ImageSequence = None
+    ImageTk = None
 
 try:
     import pytesseract
@@ -49,64 +55,76 @@ class AiyaDesktop:
         self.user_name = settings.client_user_name
         self.external_id = settings.client_external_id
         self.platform = settings.client_platform
+        self.backend = get_backend()
+
         self.ocr_enabled = False
         self.tts_enabled = False
+        self.desktop_subtitles_enabled = settings.enable_desktop_subtitles
         self.game_mode_enabled = False
         self.screen_mode = "manual"
         self.game_name = "unknown-game"
-        self.game_goal = "вижити і навчитись базовим діям"
+        self.game_goal = "вижити і рухатись до цілі"
         self.last_ocr_text = ""
         self.last_screen_summary = ""
-        self.backend = get_backend()
-        self.animation_tick = 0
-        self.overlay_window = None
-        self.overlay_canvas = None
+        self.last_translation_signature = ""
         self.translation_region = None
         self.translation_capture_mode = "region"
         self.translation_auto_enabled = False
-        self.last_translation_signature = ""
         self.translation_refresh_seconds = 4
         self.game_waiting_logged = False
+        self.animation_tick = 0
+
+        self.overlay_window = None
+        self.overlay_canvas = None
+        self.subtitle_overlay_window = None
+        self.subtitle_overlay_label = None
+        self.character_window = None
+        self.character_canvas = None
+        self.character_label = None
+        self.character_frames = []
+        self.character_frame_index = 0
+        self.character_animation_running = False
+        self.character_manifest = {}
+        self._mci_alias = "aiya_audio"
 
         self._owns_root = master is None
         self.root = tk.Tk() if self._owns_root else tk.Toplevel(master)
-        self.root.title("Aiya Fairy")
+        self.root.title("Aiya Core")
         self.root.geometry("1280x1040")
-        self.root.minsize(1100, 900)
+        self.root.minsize(1140, 900)
         self.root.configure(bg="#07120e")
-        self.root.attributes("-topmost", True)
         self.root.bind("<F8>", lambda _event: self.capture_once())
         self.root.bind("<F9>", lambda _event: self.toggle_ocr())
         self.root.bind("<F10>", lambda _event: self.toggle_game_mode())
         self.root.bind("<F11>", lambda _event: self.translate_selected_region())
 
-        self.subtitle = tk.StringVar(value="Айя на зв'язку. Техно-фея готова до розмови.")
+        self.subtitle = tk.StringVar(value="Айя на зв'язку. Core стабільний, можна тестити.")
         self.ocr_status = tk.StringVar(value="OCR: off")
+        self.tts_status = tk.StringVar(value="TTS: checking")
         self.game_status = tk.StringVar(value="Game mode: off")
         self.screen_mode_status = tk.StringVar(value="Screen mode: manual")
-        self.presence_status = tk.StringVar(value="Fairy Frame // white-green channel stable")
-        self.translation_source_lang = tk.StringVar(value="auto")
-        self.translation_target_lang = tk.StringVar(value="uk")
+        self.presence_status = tk.StringVar(value="Aiya Core // white-green channel stable")
+        self.translation_source_lang = tk.StringVar(value=settings.client_translation_source_lang)
+        self.translation_target_lang = tk.StringVar(value=settings.client_translation_target_lang)
+        self.ocr_langs_var = tk.StringVar(value=settings.ocr_languages)
         self.translation_status = tk.StringVar(value="Overlay translator: idle")
+        self.character_status = tk.StringVar(value="Character: loading")
+        self.subtitle_overlay_status = tk.StringVar(value="Subtitles overlay: pending")
 
         self._configure_styles()
         self._build_ui()
+
+        if pytesseract and settings.tesseract_cmd:
+            pytesseract.pytesseract.tesseract_cmd = settings.tesseract_cmd
+
         self._start_ocr_thread()
         self._start_game_loop()
         self._start_translation_loop()
         self._animate_scene()
-
-        if pytesseract and settings.tesseract_cmd:
-            pytesseract.pytesseract.tesseract_cmd = settings.tesseract_cmd
+        self._ensure_subtitle_overlay()
+        self._ensure_character_overlay()
         self._announce_runtime_status()
-
-    def _announce_runtime_status(self):
-        if not ImageGrab:
-            self.append_log("system", "Pillow ImageGrab недоступний. Захоплення екрана не працюватиме.")
-        if not pytesseract:
-            self.append_log("system", "pytesseract недоступний. OCR і переклад з екрана не працюватимуть.")
-        elif not settings.tesseract_cmd:
-            self.append_log("system", "Шлях до Tesseract не заданий. OCR запрацює після налаштування AIYA_TESSERACT_CMD.")
+        self._sync_runtime_flags()
 
     def _configure_styles(self):
         style = ttk.Style()
@@ -139,7 +157,7 @@ class AiyaDesktop:
         left = tk.Frame(content, bg="#07120e")
         left.pack(side="left", fill="both", expand=True)
 
-        right = tk.Frame(content, bg="#07120e", width=380)
+        right = tk.Frame(content, bg="#07120e", width=420)
         right.pack(side="right", fill="y", padx=(16, 0))
         right.pack_propagate(False)
 
@@ -148,25 +166,57 @@ class AiyaDesktop:
 
         self.hero_canvas = tk.Canvas(hero, width=720, height=760, bg="#0d1813", highlightthickness=0)
         self.hero_canvas.pack(fill="both", expand=True)
-        self.avatar = self._draw_fairy(self.hero_canvas)
+        self.avatar = self._draw_core_visual(self.hero_canvas)
 
         footer = tk.Frame(left, bg="#07120e")
         footer.pack(fill="x", pady=(14, 0))
         subtitle_card = tk.Frame(footer, bg="#0f1d16", highlightbackground="#214131", highlightthickness=1)
         subtitle_card.pack(fill="x")
 
-        tk.Label(subtitle_card, text="AIYA // FAIRY CHANNEL", bg="#0f1d16", fg="#71cf97", font=("Consolas", 10, "bold"), anchor="w").pack(fill="x", padx=16, pady=(12, 0))
-        tk.Label(subtitle_card, textvariable=self.subtitle, bg="#0f1d16", fg="#edfff3", wraplength=720, justify="left", padx=16, pady=14, font=("Segoe UI", 12, "bold")).pack(fill="x")
-        tk.Label(subtitle_card, textvariable=self.presence_status, bg="#0f1d16", fg="#8eb7a1", font=("Consolas", 9), anchor="w").pack(fill="x", padx=16, pady=(0, 12))
+        tk.Label(
+            subtitle_card,
+            text="AIYA CORE // LOCAL CONSOLE",
+            bg="#0f1d16",
+            fg="#71cf97",
+            font=("Consolas", 10, "bold"),
+            anchor="w",
+        ).pack(fill="x", padx=16, pady=(12, 0))
+        tk.Label(
+            subtitle_card,
+            textvariable=self.subtitle,
+            bg="#0f1d16",
+            fg="#edfff3",
+            wraplength=720,
+            justify="left",
+            padx=16,
+            pady=14,
+            font=("Segoe UI", 12, "bold"),
+        ).pack(fill="x")
+        tk.Label(
+            subtitle_card,
+            textvariable=self.presence_status,
+            bg="#0f1d16",
+            fg="#8eb7a1",
+            font=("Consolas", 9),
+            anchor="w",
+        ).pack(fill="x", padx=16, pady=(0, 12))
 
         self._build_side_panel(right)
 
     def _build_side_panel(self, parent: tk.Frame):
         profile = tk.Frame(parent, bg="#111f18", highlightbackground="#244233", highlightthickness=1)
         profile.pack(fill="x")
-        tk.Label(profile, text="AIYA", bg="#111f18", fg="#f3fff6", font=("Segoe UI", 22, "bold")).pack(anchor="w", padx=16, pady=(14, 2))
-        tk.Label(profile, text="White-green techno fairy frame", bg="#111f18", fg="#6db38d", font=("Consolas", 10)).pack(anchor="w", padx=16, pady=(0, 12))
-        for value in (self.ocr_status, self.game_status, self.screen_mode_status, self.translation_status):
+        tk.Label(profile, text="AIYA CORE", bg="#111f18", fg="#f3fff6", font=("Segoe UI", 22, "bold")).pack(anchor="w", padx=16, pady=(14, 2))
+        tk.Label(profile, text="Companion console below, overlays above the desktop", bg="#111f18", fg="#6db38d", font=("Consolas", 10)).pack(anchor="w", padx=16, pady=(0, 12))
+        for value in (
+            self.ocr_status,
+            self.tts_status,
+            self.game_status,
+            self.screen_mode_status,
+            self.translation_status,
+            self.character_status,
+            self.subtitle_overlay_status,
+        ):
             tk.Label(profile, textvariable=value, bg="#111f18", fg="#bddccc", font=("Segoe UI", 10), anchor="w").pack(fill="x", padx=16, pady=2)
 
         controls = tk.Frame(parent, bg="#111f18", highlightbackground="#244233", highlightthickness=1)
@@ -175,13 +225,16 @@ class AiyaDesktop:
         grid = tk.Frame(controls, bg="#111f18")
         grid.pack(fill="x", padx=12, pady=(0, 12))
         buttons = [
-            ("OCR On/Off", self.toggle_ocr),
+            ("Sync Status", self._sync_runtime_flags),
             ("Capture Now", self.capture_once),
+            ("OCR On/Off", self.toggle_ocr),
             ("TTS On/Off", self.toggle_tts),
             ("Game On/Off", self.toggle_game_mode),
             ("Game Step Now", self.run_game_step_now),
-            ("Screen Off", lambda: self.set_screen_mode("off")),
             ("Screen Always", lambda: self.set_screen_mode("always")),
+            ("Screen Off", lambda: self.set_screen_mode("off")),
+            ("Toggle Subtitles", self.toggle_subtitle_overlay),
+            ("Toggle Character", self.toggle_character_overlay),
         ]
         for index, (label, command) in enumerate(buttons):
             row, col = divmod(index, 2)
@@ -197,7 +250,9 @@ class AiyaDesktop:
         tk.Label(lang_row, text="From", bg="#13251d", fg="#badcc9", font=("Segoe UI", 10)).pack(side="left")
         tk.Entry(lang_row, textvariable=self.translation_source_lang, width=8, bg="#09150f", fg="#edfff4", insertbackground="#90f5b6", relief="flat").pack(side="left", padx=(8, 16))
         tk.Label(lang_row, text="To", bg="#13251d", fg="#badcc9", font=("Segoe UI", 10)).pack(side="left")
-        tk.Entry(lang_row, textvariable=self.translation_target_lang, width=8, bg="#09150f", fg="#edfff4", insertbackground="#90f5b6", relief="flat").pack(side="left", padx=(8, 0))
+        tk.Entry(lang_row, textvariable=self.translation_target_lang, width=8, bg="#09150f", fg="#edfff4", insertbackground="#90f5b6", relief="flat").pack(side="left", padx=(8, 16))
+        tk.Label(lang_row, text="OCR", bg="#13251d", fg="#badcc9", font=("Segoe UI", 10)).pack(side="left")
+        tk.Entry(lang_row, textvariable=self.ocr_langs_var, width=12, bg="#09150f", fg="#edfff4", insertbackground="#90f5b6", relief="flat").pack(side="left", padx=(8, 0))
         translate_grid = tk.Frame(translate_card, bg="#13251d")
         translate_grid.pack(fill="x", padx=12, pady=(10, 12))
         translate_buttons = [
@@ -224,7 +279,7 @@ class AiyaDesktop:
         tk.Label(game_card, text="Game Session", bg="#111f18", fg="#effff4", font=("Segoe UI Semibold", 12)).pack(anchor="w", padx=16, pady=(14, 10))
         self.game_name_entry = tk.Entry(game_card, bg="#09150f", fg="#effff4", insertbackground="#90f5b6", relief="flat", font=("Segoe UI", 11))
         self.game_name_entry.insert(0, self.game_name)
-        self.game_name_entry.pack(fill="x", padx=16, pady=(0, 12))
+        self.game_name_entry.pack(fill="x", padx=16, pady=(0, 8))
         self.game_goal_entry = tk.Entry(game_card, bg="#09150f", fg="#effff4", insertbackground="#90f5b6", relief="flat", font=("Segoe UI", 11))
         self.game_goal_entry.insert(0, self.game_goal)
         self.game_goal_entry.pack(fill="x", padx=16, pady=(0, 12))
@@ -242,14 +297,14 @@ class AiyaDesktop:
         canvas.create_oval(-140, -60, 560, 540, fill="#113123", outline="")
         canvas.create_oval(780, -160, 1380, 340, fill="#0d241a", outline="")
         canvas.create_oval(880, 420, 1500, 1040, fill="#0a1d15", outline="")
-        for i in range(12):
-            x = 80 + i * 108
+        for index in range(12):
+            x = 80 + index * 108
             canvas.create_line(x, 0, x - 170, height, fill="#0f2018", width=1)
-        for i in range(10):
-            y = 70 + i * 86
+        for index in range(10):
+            y = 70 + index * 86
             canvas.create_line(0, y, width, y - 36, fill="#0d1b14", width=1)
 
-    def _draw_fairy(self, canvas: tk.Canvas):
+    def _draw_core_visual(self, canvas: tk.Canvas):
         canvas.create_rectangle(0, 0, 900, 740, fill="#0d1813", outline="")
         canvas.create_oval(52, 10, 668, 648, fill="#112a1d", outline="")
         canvas.create_oval(96, 34, 624, 604, fill="#17402b", outline="")
@@ -258,19 +313,16 @@ class AiyaDesktop:
             canvas.create_oval(118, 74, 586, 586, outline="#71ce98", width=2),
             canvas.create_oval(154, 112, 550, 548, outline="#d1ffe6", width=2),
         ]
-        core_panel = canvas.create_oval(188, 126, 516, 494, fill="#10271d", outline="#2a4a39", width=2)
-        inner_panel = canvas.create_oval(220, 156, 484, 462, fill="#0d1c15", outline="#68d88f", width=2)
-        center_hex = canvas.create_polygon(352, 202, 414, 238, 414, 310, 352, 346, 290, 310, 290, 238, fill="#173726", outline="#88ffb8", width=3, smooth=True)
+        canvas.create_text(86, 54, text="AIYA // CORE", anchor="w", fill="#effff6", font=("Segoe UI", 18, "bold"))
+        canvas.create_text(88, 84, text="Companion console with detached overlays", anchor="w", fill="#6ec391", font=("Consolas", 11))
         data_core = canvas.create_oval(314, 226, 390, 322, fill="#8affb3", outline="#eafff3", width=2)
-        status_fill = canvas.create_rectangle(258, 398, 386, 414, fill="#88ffb8", outline="")
-        side_hexes = []
-        for coords in ((248, 236, 22), (456, 236, 22), (226, 336, 18), (478, 336, 18), (352, 438, 20)):
-            cx, cy, radius = coords
-            points = []
-            for index in range(6):
-                angle = math.pi / 6 + index * math.pi / 3
-                points.extend([cx + math.cos(angle) * radius, cy + math.sin(angle) * radius])
-            side_hexes.append(canvas.create_polygon(*points, fill="#12291e", outline="#78ffac", width=2))
+        halo = canvas.create_arc(230, 42, 472, 226, start=18, extent=144, style="arc", outline="#dffff2", width=3)
+        halo_inner = canvas.create_arc(248, 60, 456, 212, start=18, extent=144, style="arc", outline="#67d795", width=2)
+        eye_left = canvas.create_oval(296, 204, 318, 226, fill="", outline="#79ffae", width=2)
+        eye_right = canvas.create_oval(386, 204, 408, 226, fill="", outline="#79ffae", width=2)
+        pupil_left = canvas.create_oval(302, 210, 312, 220, fill="#a4ff7c", outline="")
+        pupil_right = canvas.create_oval(392, 210, 402, 220, fill="#a4ff7c", outline="")
+        mouth = canvas.create_line(320, 292, 352, 302, 386, 292, fill="#dc6f86", width=3, smooth=True)
         particles = []
         particle_bases = []
         for index in range(18):
@@ -280,21 +332,20 @@ class AiyaDesktop:
             cy = 346 + math.sin(angle) * radius * 0.88
             particle_bases.append((cx, cy))
             particles.append(canvas.create_oval(cx - 6, cy - 6, cx + 6, cy + 6, fill="#8effbe", outline=""))
-        halo = canvas.create_arc(230, 42, 472, 226, start=18, extent=144, style="arc", outline="#dffff2", width=3)
-        halo_inner = canvas.create_arc(248, 60, 456, 212, start=18, extent=144, style="arc", outline="#67d795", width=2)
-        eye_left = canvas.create_oval(296, 204, 318, 226, fill="", outline="#79ffae", width=2)
-        eye_right = canvas.create_oval(386, 204, 408, 226, fill="", outline="#79ffae", width=2)
-        pupil_left = canvas.create_oval(302, 210, 312, 220, fill="#a4ff7c", outline="")
-        pupil_right = canvas.create_oval(392, 210, 402, 220, fill="#a4ff7c", outline="")
-        light_left = canvas.create_oval(304, 212, 308, 216, fill="#ffffff", outline="")
-        light_right = canvas.create_oval(394, 212, 398, 216, fill="#ffffff", outline="")
-        mouth = canvas.create_line(320, 292, 352, 302, 386, 292, fill="#dc6f86", width=3, smooth=True)
-        arc_left = canvas.create_arc(120, 168, 302, 396, start=102, extent=132, style="arc", outline="#8dffbc", width=2)
-        arc_right = canvas.create_arc(402, 168, 584, 396, start=-54, extent=132, style="arc", outline="#8dffbc", width=2)
-        canvas.create_text(86, 54, text="AIYA // FAIRY LINK", anchor="w", fill="#effff6", font=("Segoe UI", 18, "bold"))
-        canvas.create_text(88, 84, text="Living techno-fairy frame with honeycomb butterfly wings", anchor="w", fill="#6ec391", font=("Consolas", 11))
-        canvas.create_text(88, 118, text="1 1 2 3 5 8 13 21", anchor="w", fill="#b8ffd5", font=("Consolas", 10, "bold"))
-        return {"rings": rings, "core_panel": core_panel, "inner_panel": inner_panel, "center_hex": center_hex, "data_core": data_core, "status_fill": status_fill, "side_hexes": side_hexes, "particles": particles, "halo": halo, "halo_inner": halo_inner, "eye_left": eye_left, "eye_right": eye_right, "pupil_left": pupil_left, "pupil_right": pupil_right, "light_left": light_left, "light_right": light_right, "mouth": mouth, "arc_left": arc_left, "arc_right": arc_right, "particle_bases": particle_bases, "mouth_base": [320, 292, 352, 302, 386, 292]}
+        return {
+            "rings": rings,
+            "data_core": data_core,
+            "halo": halo,
+            "halo_inner": halo_inner,
+            "eye_left": eye_left,
+            "eye_right": eye_right,
+            "pupil_left": pupil_left,
+            "pupil_right": pupil_right,
+            "mouth": mouth,
+            "particles": particles,
+            "particle_bases": particle_bases,
+            "mouth_base": [320, 292, 352, 302, 386, 292],
+        }
 
     def _animate_scene(self):
         self.animation_tick += 1
@@ -316,37 +367,117 @@ class AiyaDesktop:
             self.hero_canvas.coords(self.avatar["eye_right"], 386, 204, 408, 226)
             self.hero_canvas.coords(self.avatar["pupil_left"], 302, 210, 312, 220)
             self.hero_canvas.coords(self.avatar["pupil_right"], 392, 210, 402, 220)
-            self.hero_canvas.coords(self.avatar["light_left"], 304, 212, 308, 216)
-            self.hero_canvas.coords(self.avatar["light_right"], 394, 212, 398, 216)
         else:
             self.hero_canvas.coords(self.avatar["eye_left"], 296, 214, 318, 216)
             self.hero_canvas.coords(self.avatar["eye_right"], 386, 214, 408, 216)
             self.hero_canvas.coords(self.avatar["pupil_left"], 0, 0, 0, 0)
             self.hero_canvas.coords(self.avatar["pupil_right"], 0, 0, 0, 0)
-            self.hero_canvas.coords(self.avatar["light_left"], 0, 0, 0, 0)
-            self.hero_canvas.coords(self.avatar["light_right"], 0, 0, 0, 0)
         smile = math.sin(phase / 8) * 4
         mouth_base = self.avatar["mouth_base"]
         self.hero_canvas.coords(self.avatar["mouth"], mouth_base[0], mouth_base[1], mouth_base[2], mouth_base[3] + smile, mouth_base[4], mouth_base[5])
         glow = 140 + int((math.sin(phase / 13) + 1) * 35)
-        outer = f"#{glow:02x}ffbf"
+        outline = f"#{glow:02x}ffbf"
         inner = f"#{min(255, glow + 30):02x}ffe0"
-        self.hero_canvas.itemconfig(self.avatar["halo"], outline=outer)
+        self.hero_canvas.itemconfig(self.avatar["halo"], outline=outline)
         self.hero_canvas.itemconfig(self.avatar["halo_inner"], outline=inner)
-        self.hero_canvas.itemconfig(self.avatar["arc_left"], outline=outer)
-        self.hero_canvas.itemconfig(self.avatar["arc_right"], outline=outer)
-        self.hero_canvas.itemconfig(self.avatar["eye_left"], outline=outer)
-        self.hero_canvas.itemconfig(self.avatar["eye_right"], outline=outer)
         self.root.after(int(1000 / max(12, settings.performance.desktop_fps)), self._animate_scene)
 
     def append_log(self, speaker: str, text: str):
         self.log.insert("end", f"{speaker}: {text}\n\n")
         self.log.see("end")
 
+    def _announce_runtime_status(self):
+        if not ImageGrab:
+            self.append_log("system", "Pillow ImageGrab недоступний. Захоплення екрана не працюватиме.")
+        if not pytesseract:
+            self.append_log("system", "pytesseract недоступний. OCR і переклад з екрана не працюватимуть.")
+        elif not settings.tesseract_cmd:
+            self.append_log("system", "Шлях до Tesseract не заданий. OCR запрацює після налаштування AIYA_TESSERACT_CMD.")
+
+    def _sync_runtime_flags(self):
+        def worker():
+            try:
+                response = requests.get(f"{self.api_url}/users/{self.platform}/{self.external_id}/features", timeout=20)
+                response.raise_for_status()
+                features = response.json()
+                capabilities = requests.get(f"{self.api_url}/speech/capabilities", timeout=20).json()
+
+                def apply():
+                    self.ocr_enabled = bool(features.get("ocr_enabled", False))
+                    self.tts_enabled = bool(features.get("tts_enabled", False))
+                    self.desktop_subtitles_enabled = bool(features.get("desktop_subtitles_enabled", True))
+                    self.ocr_status.set(f"OCR: {'on' if self.ocr_enabled else 'off'}")
+                    self.tts_status.set(
+                        f"TTS: {'on' if self.tts_enabled else 'off'} // {capabilities.get('provider')} // "
+                        f"delivery={'ok' if capabilities.get('delivery_enabled') else 'off'}"
+                    )
+                    self.subtitle_overlay_status.set(
+                        f"Subtitles overlay: {'on' if self.desktop_subtitles_enabled and self.subtitle_overlay_window else 'off'}"
+                    )
+                    self.append_log("system", "Синхронізовано feature flags і TTS capabilities.")
+
+                self.root.after(0, apply)
+            except Exception as exc:
+                self.root.after(0, lambda: self.append_log("system", f"Не вдалося синхронізувати runtime status: {exc}"))
+
+        threading.Thread(target=worker, daemon=True).start()
+
     def toggle_ocr(self):
         self.ocr_enabled = not self.ocr_enabled
         self._patch_feature("ocr_enabled", self.ocr_enabled)
         self.ocr_status.set(f"OCR: {'on' if self.ocr_enabled else 'off'}")
+
+    def toggle_tts(self):
+        self.tts_enabled = not self.tts_enabled
+        self._patch_feature("tts_enabled", self.tts_enabled)
+        self.tts_status.set(f"TTS: {'on' if self.tts_enabled else 'off'}")
+        self.append_log("system", f"TTS {'увімкнено' if self.tts_enabled else 'вимкнено'}")
+
+    def toggle_game_mode(self):
+        self.game_mode_enabled = not self.game_mode_enabled
+        self.game_waiting_logged = False
+        self.game_name = self.game_name_entry.get().strip() or self.game_name
+        self.game_goal = self.game_goal_entry.get().strip() or self.game_goal
+        if self.game_mode_enabled:
+            self.set_screen_mode("always")
+            self.capture_once()
+            self.append_log("system", f"Game mode увімкнено для '{self.game_name}'. Ціль: {self.game_goal}")
+        else:
+            self.append_log("system", "Game mode вимкнено.")
+        self.game_status.set(f"Game mode: {'on' if self.game_mode_enabled else 'off'} ({self.game_name})")
+
+    def run_game_step_now(self):
+        self.game_name = self.game_name_entry.get().strip() or self.game_name
+        self.game_goal = self.game_goal_entry.get().strip() or self.game_goal
+        threading.Thread(target=self._capture_then_run_game_step, daemon=True).start()
+
+    def _capture_then_run_game_step(self):
+        self._capture_and_send_if_changed(force=True)
+        if self.last_screen_summary:
+            self._run_game_step()
+        else:
+            self.root.after(0, lambda: self.append_log("game", "Немає screen summary. Спершу потрібне успішне захоплення екрана."))
+
+    def toggle_subtitle_overlay(self):
+        if self.subtitle_overlay_window and self.subtitle_overlay_window.winfo_exists():
+            self.subtitle_overlay_window.destroy()
+            self.subtitle_overlay_window = None
+            self.subtitle_overlay_label = None
+            self.subtitle_overlay_status.set("Subtitles overlay: off")
+            return
+        self._ensure_subtitle_overlay()
+        self._update_subtitle_overlay(self.subtitle.get())
+        self.subtitle_overlay_status.set("Subtitles overlay: on")
+
+    def toggle_character_overlay(self):
+        if self.character_window and self.character_window.winfo_exists():
+            self.character_window.destroy()
+            self.character_window = None
+            self.character_label = None
+            self.character_canvas = None
+            self.character_status.set("Character: off")
+            return
+        self._ensure_character_overlay()
 
     def set_screen_mode(self, mode: str):
         self.screen_mode = mode
@@ -359,35 +490,16 @@ class AiyaDesktop:
         self.screen_mode_status.set(f"Screen mode: {mode}")
         self.ocr_status.set(f"OCR: {'on' if self.ocr_enabled else 'off'}")
 
-    def toggle_tts(self):
-        self.tts_enabled = not self.tts_enabled
-        self._patch_feature("tts_enabled", self.tts_enabled)
-        self.append_log("system", f"TTS {'увімкнено' if self.tts_enabled else 'вимкнено'}")
-
-    def toggle_game_mode(self):
-        self.game_mode_enabled = not self.game_mode_enabled
-        self.game_name = self.game_name_entry.get().strip() or self.game_name
-        self.game_goal = self.game_goal_entry.get().strip() or self.game_goal
-        self.game_waiting_logged = False
-        if self.game_mode_enabled:
-            if self.screen_mode != "always":
-                self.set_screen_mode("always")
-            self.capture_once()
-            self.append_log("system", f"Game mode увімкнено для '{self.game_name}'. Ціль: {self.game_goal}")
-        else:
-            self.append_log("system", "Game mode вимкнено.")
-        self.game_status.set(f"Game mode: {'on' if self.game_mode_enabled else 'off'} ({self.game_name})")
-
-    def run_game_step_now(self):
-        self.game_name = self.game_name_entry.get().strip() or self.game_name
-        self.game_goal = self.game_goal_entry.get().strip() or self.game_goal
-        threading.Thread(target=self._capture_then_run_game_step, daemon=True).start()
-
     def _patch_feature(self, field: str, value: bool):
         try:
-            requests.patch(f"{self.api_url}/users/{self.platform}/{self.external_id}/features", json={field: value}, timeout=30)
-        except Exception as e:
-            self.append_log("system", f"Не вдалося оновити {field}: {e}")
+            response = requests.patch(
+                f"{self.api_url}/users/{self.platform}/{self.external_id}/features",
+                json={field: value},
+                timeout=30,
+            )
+            response.raise_for_status()
+        except Exception as exc:
+            self.append_log("system", f"Не вдалося оновити {field}: {exc}")
 
     def ask_from_input(self):
         text = self.entry.get("1.0", "end").strip()
@@ -399,35 +511,56 @@ class AiyaDesktop:
 
     def _ask_api(self, text: str):
         try:
-            response = requests.post(f"{self.api_url}/ask", json={"platform": self.platform, "external_id": self.external_id, "user_name": self.user_name, "text": text}, timeout=180)
+            response = requests.post(
+                f"{self.api_url}/ask",
+                json={"platform": self.platform, "external_id": self.external_id, "user_name": self.user_name, "text": text},
+                timeout=180,
+            )
             response.raise_for_status()
             data = response.json()
             answer = data.get("answer", "...")
-            self.presence_status.set("Fairy Frame // response synced")
+            self.presence_status.set("Aiya Core // response synced")
             if self.tts_enabled and data.get("tts_available"):
                 self._play_tts(answer)
-        except Exception as e:
-            answer = f"Помилка: {e}"
-            self.presence_status.set("Fairy Frame // connection unstable")
-        self.root.after(0, lambda: self.subtitle.set(answer))
+        except Exception as exc:
+            answer = f"Помилка: {exc}"
+            self.presence_status.set("Aiya Core // connection unstable")
+        self.root.after(0, lambda: self._set_subtitle(answer))
         self.root.after(0, lambda: self.append_log("aiya", answer))
 
+    def _set_subtitle(self, text: str):
+        self.subtitle.set(text)
+        self._update_subtitle_overlay(text)
+
     def _play_tts(self, text: str):
-        if not winsound:
-            return
         try:
             response = requests.post(f"{self.api_url}/speech/file", json={"text": text}, timeout=180)
             response.raise_for_status()
             content_type = (response.headers.get("Content-Type") or "").lower()
-            if "wav" not in content_type and "wave" not in content_type:
-                self.root.after(0, lambda: self.append_log("system", "Локальне відтворення companion зараз підтримує лише WAV-аудіо."))
-                return
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as temp_file:
+            suffix = ".wav"
+            if "ogg" in content_type:
+                suffix = ".ogg"
+            elif "mpeg" in content_type or "mp3" in content_type:
+                suffix = ".mp3"
+            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
                 temp_file.write(response.content)
                 temp_path = temp_file.name
-            winsound.PlaySound(temp_path, winsound.SND_FILENAME | winsound.SND_ASYNC)
-        except Exception as e:
-            self.root.after(0, lambda: self.append_log("system", f"TTS playback error: {e}"))
+            self._play_audio_file(temp_path, suffix)
+        except Exception as exc:
+            self.root.after(0, lambda: self.append_log("system", f"TTS playback error: {exc}"))
+
+    def _play_audio_file(self, path: str, suffix: str):
+        if suffix == ".wav" and winsound:
+            winsound.PlaySound(path, winsound.SND_FILENAME | winsound.SND_ASYNC)
+            return
+        try:
+            winmm = ctypes.windll.winmm
+            winmm.mciSendStringW(f"close {self._mci_alias}", None, 0, None)
+            winmm.mciSendStringW(f'open "{path}" alias {self._mci_alias}', None, 0, None)
+            winmm.mciSendStringW(f"play {self._mci_alias}", None, 0, None)
+        except Exception:
+            if hasattr(os, "startfile"):
+                os.startfile(path)
 
     def _start_ocr_thread(self):
         def loop():
@@ -435,6 +568,7 @@ class AiyaDesktop:
                 if self.ocr_enabled and self.screen_mode == "always":
                     self._capture_and_send_if_changed()
                 time.sleep(settings.performance.ocr_interval_seconds)
+
         threading.Thread(target=loop, daemon=True).start()
 
     def _start_translation_loop(self):
@@ -443,33 +577,8 @@ class AiyaDesktop:
                 if self.translation_auto_enabled and self.translation_region:
                     self._translate_current_target()
                 time.sleep(self.translation_refresh_seconds)
+
         threading.Thread(target=loop, daemon=True).start()
-
-    def capture_once(self):
-        if self.screen_mode == "off":
-            self.append_log("system", "Screen mode is off")
-            return
-        threading.Thread(target=self._capture_and_send_if_changed, daemon=True).start()
-
-    def _capture_and_send_if_changed(self):
-        text, image_b64 = self._capture_screen_snapshot()
-        if text and text != self.last_ocr_text:
-            self.last_ocr_text = text
-            self._send_screen_observation(text, image_b64)
-            self.root.after(0, lambda: self.ocr_status.set(f"OCR: {text[:80]}"))
-
-    def _send_screen_observation(self, text: str, image_b64: str = ""):
-        try:
-            if image_b64:
-                response = requests.post(f"{self.api_url}/screen/analyze-image", json={"platform": self.platform, "external_id": self.external_id, "user_name": self.user_name, "image_base64": image_b64, "raw_text": text, "source": "desktop_vision"}, timeout=120)
-            else:
-                response = requests.post(f"{self.api_url}/screen/observe", json={"platform": self.platform, "external_id": self.external_id, "user_name": self.user_name, "raw_text": text, "source": "desktop_ocr"}, timeout=120)
-            if response.ok:
-                data = response.json()
-                self.last_screen_summary = data.get("summary", "")
-                self.presence_status.set("Fairy Frame // vision context updated")
-        except Exception as e:
-            self.root.after(0, lambda: self.append_log("system", f"screen observe error: {e}"))
 
     def _start_game_loop(self):
         def loop():
@@ -480,34 +589,100 @@ class AiyaDesktop:
                         self._run_game_step()
                     elif not self.game_waiting_logged:
                         self.game_waiting_logged = True
-                        self.root.after(0, lambda: self.append_log("system", "Game mode чекає на актуальний опис екрана. Увімкни Screen Always або натисни Capture Now."))
+                        self.root.after(0, lambda: self.append_log("game", "Game mode чекає на свіжий screen summary. Натисни Capture Now або увімкни Screen Always."))
                 time.sleep(settings.performance.screen_summary_interval_seconds)
+
         threading.Thread(target=loop, daemon=True).start()
 
-    def _capture_then_run_game_step(self):
-        self._capture_and_send_if_changed()
-        if not self.last_screen_summary:
-            self.root.after(0, lambda: self.append_log("system", "Немає screen summary для game mode. Перевір OCR/Tesseract або зроби Capture Now ще раз."))
+    def capture_once(self):
+        if self.screen_mode == "off":
+            self.append_log("system", "Screen mode is off")
             return
-        self._run_game_step()
+        threading.Thread(target=self._capture_and_send_if_changed, daemon=True).start()
+
+    def _capture_and_send_if_changed(self, force: bool = False):
+        text, image_b64 = self._capture_screen_snapshot()
+        if text and (force or text != self.last_ocr_text):
+            self.last_ocr_text = text
+            self._send_screen_observation(text, image_b64)
+            self.root.after(0, lambda: self.ocr_status.set(f"OCR: {text[:80]}"))
+
+    def _capture_screen_snapshot(self):
+        if not ImageGrab or not pytesseract:
+            return "Pillow/pytesseract недоступні", ""
+        try:
+            shot = ImageGrab.grab()
+            langs = self.ocr_langs_var.get().strip() or "ukr+eng"
+            text = pytesseract.image_to_string(shot, lang=langs).strip()
+            preview = shot.copy()
+            preview.thumbnail((896, 896))
+            out = io.BytesIO()
+            preview.save(out, format="JPEG", quality=82)
+            image_b64 = base64.b64encode(out.getvalue()).decode("utf-8")
+            return text.replace("\n", " ")[:600], image_b64
+        except Exception as exc:
+            return f"OCR error: {exc}", ""
+
+    def _send_screen_observation(self, text: str, image_b64: str = ""):
+        try:
+            if image_b64:
+                response = requests.post(
+                    f"{self.api_url}/screen/analyze-image",
+                    json={
+                        "platform": self.platform,
+                        "external_id": self.external_id,
+                        "user_name": self.user_name,
+                        "image_base64": image_b64,
+                        "raw_text": text,
+                        "source": "desktop_vision",
+                    },
+                    timeout=120,
+                )
+            else:
+                response = requests.post(
+                    f"{self.api_url}/screen/observe",
+                    json={
+                        "platform": self.platform,
+                        "external_id": self.external_id,
+                        "user_name": self.user_name,
+                        "raw_text": text,
+                        "source": "desktop_ocr",
+                    },
+                    timeout=120,
+                )
+            if response.ok:
+                data = response.json()
+                self.last_screen_summary = data.get("summary", "")
+                self.presence_status.set("Aiya Core // vision context updated")
+        except Exception as exc:
+            self.root.after(0, lambda: self.append_log("system", f"screen observe error: {exc}"))
 
     def _run_game_step(self):
         try:
-            response = requests.post(f"{self.api_url}/game/plan", json={"platform": self.platform, "external_id": self.external_id, "user_name": self.user_name, "game_name": self.game_name, "goal": self.game_goal, "screen_summary": self.last_screen_summary, "capabilities": self.backend.capabilities()}, timeout=120)
+            response = requests.post(
+                f"{self.api_url}/game/plan",
+                json={
+                    "platform": self.platform,
+                    "external_id": self.external_id,
+                    "user_name": self.user_name,
+                    "game_name": self.game_name,
+                    "goal": self.game_goal,
+                    "screen_summary": self.last_screen_summary,
+                    "capabilities": self.backend.capabilities(),
+                },
+                timeout=120,
+            )
             response.raise_for_status()
             data = response.json()
             plan = data.get("plan", {})
             actions = plan.get("actions", [])
             reasoning = plan.get("reasoning", "")
-            if actions:
-                self.root.after(0, lambda: self.append_log("game-plan", reasoning))
-            else:
-                self.root.after(0, lambda: self.append_log("game-plan", reasoning or "Поки що не бачу безпечної дії для поточної сцени."))
+            self.root.after(0, lambda: self.append_log("game-plan", reasoning or "Без нових дій."))
             for action in actions:
                 ok = self.backend.execute(action)
                 self.root.after(0, lambda action=action, ok=ok: self.append_log("game-exec", f"{action} => {'ok' if ok else 'unsupported'}"))
-        except Exception as e:
-            self.root.after(0, lambda: self.append_log("system", f"game loop error: {e}"))
+        except Exception as exc:
+            self.root.after(0, lambda: self.append_log("system", f"game loop error: {exc}"))
 
     def translate_selected_region(self):
         self.translation_capture_mode = "region"
@@ -540,6 +715,7 @@ class AiyaDesktop:
         self.translation_auto_enabled = False
         self.translation_status.set("Overlay translator: switch to target window now")
         self.root.iconify()
+
         def delayed_capture():
             time.sleep(1.2)
             region = self._get_foreground_window_rect()
@@ -549,6 +725,7 @@ class AiyaDesktop:
                 return
             self.translation_region = region
             self._translate_current_target()
+
         threading.Thread(target=delayed_capture, daemon=True).start()
 
     def _translate_current_target(self):
@@ -573,12 +750,29 @@ class AiyaDesktop:
         source_lang = self.translation_source_lang.get().strip() or "auto"
         target_lang = self.translation_target_lang.get().strip() or "uk"
         for line in lines:
-            result = translate_text(line.text, source_lang=source_lang, target_lang=target_lang)
-            translated_text = result.get("translation", line.text) if result.get("ok") else line.text
+            translated_text = self._translate_via_api(line.text, source_lang, target_lang)
             translated_blocks.append((line, translated_text))
         self.root.after(0, lambda: self._render_translation_overlay(region, translated_blocks))
         self.root.after(0, lambda: self.translation_status.set(f"Overlay translator: {len(translated_blocks)} lines translated"))
         self.root.after(0, lambda: self.append_log("translate", f"Translated overlay in {self.translation_capture_mode} mode"))
+
+    def _translate_via_api(self, text: str, source_lang: str, target_lang: str) -> str:
+        try:
+            response = requests.post(
+                f"{self.api_url}/translate",
+                json={
+                    "text": text,
+                    "source_language": source_lang,
+                    "target_language": target_lang,
+                },
+                timeout=120,
+            )
+            response.raise_for_status()
+            payload = response.json()
+            return (payload.get("translation") or text).strip() or text
+        except Exception as exc:
+            self.root.after(0, lambda: self.append_log("translate", f"Translation error: {exc}"))
+            return text
 
     def clear_translation_overlay(self):
         self.translation_auto_enabled = False
@@ -601,10 +795,11 @@ class AiyaDesktop:
     def _ocr_lines_from_image(self, image):
         if not pytesseract:
             return []
+        langs = self.ocr_langs_var.get().strip() or "ukr+eng"
         try:
-            data = pytesseract.image_to_data(image, lang="ukr+eng", output_type=pytesseract.Output.DICT)
+            data = pytesseract.image_to_data(image, lang=langs, output_type=pytesseract.Output.DICT)
         except Exception as exc:
-            self.root.after(0, lambda exc=exc: self.append_log("translate", f"OCR data error: {exc}"))
+            self.root.after(0, lambda: self.append_log("translate", f"OCR data error: {exc}"))
             return []
         grouped = {}
         count = len(data.get("text", []))
@@ -619,7 +814,16 @@ class AiyaDesktop:
             if confidence < 20:
                 continue
             key = (data["block_num"][index], data["par_num"][index], data["line_num"][index])
-            item = grouped.setdefault(key, {"words": [], "left": data["left"][index], "top": data["top"][index], "right": data["left"][index] + data["width"][index], "bottom": data["top"][index] + data["height"][index]})
+            item = grouped.setdefault(
+                key,
+                {
+                    "words": [],
+                    "left": data["left"][index],
+                    "top": data["top"][index],
+                    "right": data["left"][index] + data["width"][index],
+                    "bottom": data["top"][index] + data["height"][index],
+                },
+            )
             item["words"].append(raw)
             item["left"] = min(item["left"], data["left"][index])
             item["top"] = min(item["top"], data["top"][index])
@@ -630,7 +834,15 @@ class AiyaDesktop:
             text = " ".join(item["words"]).strip()
             if not text:
                 continue
-            lines.append(OCRLine(text=text, left=item["left"], top=item["top"], width=max(1, item["right"] - item["left"]), height=max(1, item["bottom"] - item["top"])))
+            lines.append(
+                OCRLine(
+                    text=text,
+                    left=item["left"],
+                    top=item["top"],
+                    width=max(1, item["right"] - item["left"]),
+                    height=max(1, item["bottom"] - item["top"]),
+                )
+            )
         return sorted(lines, key=lambda line: (line.top, line.left))
 
     def _render_translation_overlay(self, region, translated_blocks):
@@ -658,8 +870,156 @@ class AiyaDesktop:
             y1 = max(0, line.top - 2)
             x2 = min(width, line.left + line.width + 6)
             y2 = min(height, line.top + line.height + 6)
-            self.overlay_canvas.create_rectangle(x1, y1, x2, y2, fill="#101914", outline="#5fe08d", width=1)
-            self.overlay_canvas.create_text(x1 + 4, y1 + 2, text=translated_text, anchor="nw", fill="#effff5", width=max(40, x2 - x1 - 8), font=("Segoe UI", font_size, "bold"))
+            self.overlay_canvas.create_rectangle(x1, y1, x2, y2, fill="#101914", outline="#90ff8f", width=1)
+            self.overlay_canvas.create_text(
+                x1 + 4,
+                y1 + 2,
+                text=translated_text,
+                anchor="nw",
+                fill="#effff5",
+                width=max(40, x2 - x1 - 8),
+                font=("Segoe UI", font_size, "bold"),
+            )
+
+    def _ensure_subtitle_overlay(self):
+        if not settings.subtitle_overlay_enabled and not self.desktop_subtitles_enabled:
+            return
+        if self.subtitle_overlay_window and self.subtitle_overlay_window.winfo_exists():
+            return
+        window = tk.Toplevel(self.root)
+        window.overrideredirect(True)
+        window.attributes("-topmost", True)
+        window.attributes("-alpha", 0.94)
+        window.configure(bg="#06110c")
+        label = tk.Label(
+            window,
+            text=self.subtitle.get(),
+            bg="#06110c",
+            fg=settings.subtitle_color,
+            font=("Segoe UI Semibold", 18),
+            justify="center",
+            wraplength=960,
+            padx=18,
+            pady=12,
+        )
+        label.pack(fill="both", expand=True)
+        self.subtitle_overlay_window = window
+        self.subtitle_overlay_label = label
+        self._update_subtitle_overlay(self.subtitle.get())
+
+    def _update_subtitle_overlay(self, text: str):
+        if not self.desktop_subtitles_enabled:
+            return
+        if not self.subtitle_overlay_window or not self.subtitle_overlay_window.winfo_exists():
+            return
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        width = min(980, max(360, int(screen_width * 0.56)))
+        x = max(20, (screen_width - width) // 2)
+        y = max(20, screen_height - 170)
+        self.subtitle_overlay_window.geometry(f"{width}x92+{x}+{y}")
+        self.subtitle_overlay_label.config(text=text)
+        self.subtitle_overlay_status.set("Subtitles overlay: on")
+
+    def _resolve_character_source(self):
+        raw = settings.character_asset.strip()
+        if not raw:
+            return None, {}
+        source = Path(raw).expanduser()
+        manifest = {}
+        if source.is_dir():
+            manifest_path = source / "manifest.json"
+            if manifest_path.exists():
+                try:
+                    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                except Exception:
+                    manifest = {}
+            idle_name = manifest.get("idle") or "idle.gif"
+            candidate = source / idle_name
+            if not candidate.exists():
+                for name in ("idle.png", "idle.webp", "idle.jpg", "idle.jpeg"):
+                    candidate = source / name
+                    if candidate.exists():
+                        break
+            source = candidate
+        return source if source.exists() else None, manifest
+
+    def _ensure_character_overlay(self):
+        if not settings.character_overlay_enabled:
+            self.character_status.set("Character: disabled by config")
+            return
+        if self.character_window and self.character_window.winfo_exists():
+            return
+        self.character_window = tk.Toplevel(self.root)
+        self.character_window.overrideredirect(True)
+        self.character_window.attributes("-topmost", True)
+        self.character_window.configure(bg="#010203")
+        try:
+            self.character_window.wm_attributes("-transparentcolor", "#010203")
+        except Exception:
+            pass
+        self.character_window.attributes("-alpha", 0.97)
+        source, manifest = self._resolve_character_source()
+        self.character_manifest = manifest
+        if source and Image is not None and ImageTk is not None:
+            self.character_label = tk.Label(self.character_window, bg="#010203", bd=0)
+            self.character_label.pack(fill="both", expand=True)
+            self._load_character_frames(source, manifest)
+        else:
+            self.character_canvas = tk.Canvas(self.character_window, width=320, height=420, bg="#010203", highlightthickness=0)
+            self.character_canvas.pack(fill="both", expand=True)
+            self._draw_default_character_overlay(self.character_canvas)
+        self._position_character_overlay()
+        self.character_status.set("Character: on-screen")
+
+    def _load_character_frames(self, source: Path, manifest: dict):
+        self.character_frames = []
+        scale = float(manifest.get("scale", settings.character_scale or 1.0))
+        image = Image.open(source)
+        for frame in ImageSequence.Iterator(image) if getattr(image, "is_animated", False) else [image]:
+            rendered = frame.convert("RGBA")
+            width = max(64, int(rendered.width * scale))
+            height = max(64, int(rendered.height * scale))
+            rendered = rendered.resize((width, height), Image.LANCZOS)
+            self.character_frames.append(ImageTk.PhotoImage(rendered))
+        if self.character_frames and self.character_label:
+            self.character_label.config(image=self.character_frames[0])
+            self.character_label.image = self.character_frames[0]
+            if len(self.character_frames) > 1 and not self.character_animation_running:
+                self.character_animation_running = True
+                self._tick_character_animation()
+
+    def _tick_character_animation(self):
+        if not self.character_window or not self.character_window.winfo_exists() or not self.character_frames or not self.character_label:
+            self.character_animation_running = False
+            return
+        self.character_frame_index = (self.character_frame_index + 1) % len(self.character_frames)
+        frame = self.character_frames[self.character_frame_index]
+        self.character_label.config(image=frame)
+        self.character_label.image = frame
+        self.root.after(120, self._tick_character_animation)
+
+    def _draw_default_character_overlay(self, canvas: tk.Canvas):
+        canvas.create_oval(36, 22, 286, 272, fill="#123123", outline="#78ffae", width=3)
+        canvas.create_oval(88, 68, 234, 214, fill="#0f1d16", outline="#ceffe3", width=2)
+        canvas.create_oval(118, 104, 148, 134, fill="#90ff9f", outline="")
+        canvas.create_oval(172, 104, 202, 134, fill="#90ff9f", outline="")
+        canvas.create_line(126, 182, 160, 196, 196, 182, fill="#f07ca1", width=3, smooth=True)
+        canvas.create_text(160, 312, text="AIYA", fill="#effff5", font=("Segoe UI", 22, "bold"))
+        canvas.create_text(160, 344, text="Character Overlay", fill="#96d7ad", font=("Consolas", 11))
+        canvas.create_text(160, 378, text="Додай AIYA_CHARACTER_ASSET,\nщоб підставити свою модель.", fill="#d8ffe7", font=("Segoe UI", 10), justify="center")
+
+    def _position_character_overlay(self):
+        if not self.character_window or not self.character_window.winfo_exists():
+            return
+        width = 340
+        height = 520
+        dock = (self.character_manifest.get("dock") or settings.character_dock or "right").lower()
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        x = 20 if dock == "left" else screen_width - width - 20
+        y = max(20, screen_height - height - 140)
+        self.character_window.geometry(f"{width}x{height}+{x}+{y}")
 
     def _select_region_interactively(self):
         selection = {"bbox": None}
@@ -672,15 +1032,19 @@ class AiyaDesktop:
         canvas.pack(fill="both", expand=True)
         start = {"x": 0, "y": 0}
         rect = {"id": None}
+
         def on_press(event):
             start["x"], start["y"] = event.x, event.y
             rect["id"] = canvas.create_rectangle(event.x, event.y, event.x, event.y, outline="#88ffb8", width=3)
+
         def on_drag(event):
             if rect["id"]:
                 canvas.coords(rect["id"], start["x"], start["y"], event.x, event.y)
+
         def on_release(event):
             selection["bbox"] = (min(start["x"], event.x), min(start["y"], event.y), max(start["x"], event.x), max(start["y"], event.y))
             picker.destroy()
+
         picker.bind("<Escape>", lambda _event: picker.destroy())
         canvas.bind("<ButtonPress-1>", on_press)
         canvas.bind("<B1-Motion>", on_drag)
@@ -701,7 +1065,7 @@ class AiyaDesktop:
             hwnd = user32.GetForegroundWindow()
             if not hwnd:
                 return None
-            rect = ctypes.wintypes.RECT()
+            rect = wintypes.RECT()
             if user32.GetWindowRect(hwnd, ctypes.byref(rect)) == 0:
                 return None
             left, top, right, bottom = rect.left, rect.top, rect.right, rect.bottom
@@ -710,21 +1074,6 @@ class AiyaDesktop:
             return (left, top, right, bottom)
         except Exception:
             return None
-
-    def _capture_screen_snapshot(self):
-        if not ImageGrab or not pytesseract:
-            return "Pillow/pytesseract недоступні", ""
-        try:
-            shot = ImageGrab.grab()
-            text = pytesseract.image_to_string(shot, lang="ukr+eng").strip()
-            preview = shot.copy()
-            preview.thumbnail((896, 896))
-            out = io.BytesIO()
-            preview.save(out, format="JPEG", quality=82)
-            image_b64 = base64.b64encode(out.getvalue()).decode("utf-8")
-            return text.replace("\n", " ")[:600], image_b64
-        except Exception as e:
-            return f"OCR error: {e}", ""
 
     def run(self):
         if self._owns_root:

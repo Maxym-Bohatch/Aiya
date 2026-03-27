@@ -48,6 +48,7 @@ def main():
         settings.ollama_chat_model,
         settings.ollama_embed_model,
         settings.ollama_vision_model,
+        settings.translation_model,
     }
     existing = installed_models()
     missing = [model for model in desired if model and model not in existing]

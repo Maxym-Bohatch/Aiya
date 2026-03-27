@@ -11,3 +11,5 @@ Pillow
 pytesseract
 vgamepad
 edge-tts
+gTTS
+deep-translator
