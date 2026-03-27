@@ -66,6 +66,7 @@ class AiyaDesktop:
         self.translation_auto_enabled = False
         self.last_translation_signature = ""
         self.translation_refresh_seconds = 4
+        self.game_waiting_logged = False
 
         self._owns_root = master is None
         self.root = tk.Tk() if self._owns_root else tk.Toplevel(master)
@@ -178,6 +179,7 @@ class AiyaDesktop:
             ("Capture Now", self.capture_once),
             ("TTS On/Off", self.toggle_tts),
             ("Game On/Off", self.toggle_game_mode),
+            ("Game Step Now", self.run_game_step_now),
             ("Screen Off", lambda: self.set_screen_mode("off")),
             ("Screen Always", lambda: self.set_screen_mode("always")),
         ]
@@ -223,6 +225,9 @@ class AiyaDesktop:
         self.game_name_entry = tk.Entry(game_card, bg="#09150f", fg="#effff4", insertbackground="#90f5b6", relief="flat", font=("Segoe UI", 11))
         self.game_name_entry.insert(0, self.game_name)
         self.game_name_entry.pack(fill="x", padx=16, pady=(0, 12))
+        self.game_goal_entry = tk.Entry(game_card, bg="#09150f", fg="#effff4", insertbackground="#90f5b6", relief="flat", font=("Segoe UI", 11))
+        self.game_goal_entry.insert(0, self.game_goal)
+        self.game_goal_entry.pack(fill="x", padx=16, pady=(0, 12))
 
         log_card = tk.Frame(parent, bg="#111f18", highlightbackground="#244233", highlightthickness=1)
         log_card.pack(fill="both", expand=True, pady=(14, 0))
@@ -362,7 +367,21 @@ class AiyaDesktop:
     def toggle_game_mode(self):
         self.game_mode_enabled = not self.game_mode_enabled
         self.game_name = self.game_name_entry.get().strip() or self.game_name
+        self.game_goal = self.game_goal_entry.get().strip() or self.game_goal
+        self.game_waiting_logged = False
+        if self.game_mode_enabled:
+            if self.screen_mode != "always":
+                self.set_screen_mode("always")
+            self.capture_once()
+            self.append_log("system", f"Game mode увімкнено для '{self.game_name}'. Ціль: {self.game_goal}")
+        else:
+            self.append_log("system", "Game mode вимкнено.")
         self.game_status.set(f"Game mode: {'on' if self.game_mode_enabled else 'off'} ({self.game_name})")
+
+    def run_game_step_now(self):
+        self.game_name = self.game_name_entry.get().strip() or self.game_name
+        self.game_goal = self.game_goal_entry.get().strip() or self.game_goal
+        threading.Thread(target=self._capture_then_run_game_step, daemon=True).start()
 
     def _patch_feature(self, field: str, value: bool):
         try:
@@ -455,10 +474,22 @@ class AiyaDesktop:
     def _start_game_loop(self):
         def loop():
             while True:
-                if self.game_mode_enabled and self.last_screen_summary:
-                    self._run_game_step()
+                if self.game_mode_enabled:
+                    if self.last_screen_summary:
+                        self.game_waiting_logged = False
+                        self._run_game_step()
+                    elif not self.game_waiting_logged:
+                        self.game_waiting_logged = True
+                        self.root.after(0, lambda: self.append_log("system", "Game mode чекає на актуальний опис екрана. Увімкни Screen Always або натисни Capture Now."))
                 time.sleep(settings.performance.screen_summary_interval_seconds)
         threading.Thread(target=loop, daemon=True).start()
+
+    def _capture_then_run_game_step(self):
+        self._capture_and_send_if_changed()
+        if not self.last_screen_summary:
+            self.root.after(0, lambda: self.append_log("system", "Немає screen summary для game mode. Перевір OCR/Tesseract або зроби Capture Now ще раз."))
+            return
+        self._run_game_step()
 
     def _run_game_step(self):
         try:
@@ -467,8 +498,11 @@ class AiyaDesktop:
             data = response.json()
             plan = data.get("plan", {})
             actions = plan.get("actions", [])
+            reasoning = plan.get("reasoning", "")
             if actions:
-                self.root.after(0, lambda: self.append_log("game-plan", plan.get("reasoning", "")))
+                self.root.after(0, lambda: self.append_log("game-plan", reasoning))
+            else:
+                self.root.after(0, lambda: self.append_log("game-plan", reasoning or "Поки що не бачу безпечної дії для поточної сцени."))
             for action in actions:
                 ok = self.backend.execute(action)
                 self.root.after(0, lambda action=action, ok=ok: self.append_log("game-exec", f"{action} => {'ok' if ok else 'unsupported'}"))

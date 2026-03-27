@@ -4,6 +4,8 @@ import brain
 import database as db
 import vision_engine
 
+SUPPORTED_ACTIONS = {"press", "gamepad_button", "move_left_stick"}
+
 
 def summarize_screen(raw_text: str) -> str:
     raw_text = (raw_text or "").strip()
@@ -30,6 +32,24 @@ def analyze_screen_image(image_b64: str, raw_text: str = "") -> str:
     return summarize_screen(raw_text)
 
 
+def _filter_actions(actions, capabilities: dict) -> list[dict]:
+    filtered = []
+    allow_keyboard = bool(capabilities.get("keyboard", False))
+    allow_gamepad = bool(capabilities.get("gamepad", False))
+    for action in actions or []:
+        if not isinstance(action, dict):
+            continue
+        action_type = action.get("type")
+        if action_type not in SUPPORTED_ACTIONS:
+            continue
+        if action_type == "press" and not allow_keyboard:
+            continue
+        if action_type in {"gamepad_button", "move_left_stick"} and not allow_gamepad:
+            continue
+        filtered.append(action)
+    return filtered[:4]
+
+
 def build_game_action_plan(game_name: str, goal: str, screen_summary: str, recent_events, capabilities=None) -> dict:
     capabilities = capabilities or {"keyboard": True, "gamepad": False, "mode": "keyboard"}
     recent_text = "\n".join(
@@ -37,7 +57,7 @@ def build_game_action_plan(game_name: str, goal: str, screen_summary: str, recen
             f"- type={event_type}; screen={screen}; action={action}; outcome={outcome}"
             for event_type, screen, action, outcome in recent_events
         ]
-    )
+    ) or "- Поки що без попередніх подій."
     prompt = f"""
 Ти ігровий агент Айї.
 Гра: {game_name}
@@ -49,7 +69,7 @@ def build_game_action_plan(game_name: str, goal: str, screen_summary: str, recen
 
 Поверни лише JSON:
 {{
-  "reasoning": "коротко",
+  "reasoning": "коротко і по суті",
   "actions": [
     {{"type": "press", "control": "w", "duration_ms": 250}},
     {{"type": "press", "control": "space", "duration_ms": 120}},
@@ -57,17 +77,22 @@ def build_game_action_plan(game_name: str, goal: str, screen_summary: str, recen
     {{"type": "move_left_stick", "x": 0.0, "y": 1.0, "duration_ms": 250}}
   ]
 }}
-Використовуй лише ті типи дій, які підтримують доступні способи керування.
-Якщо діяти не треба, поверни actions: [].
+
+Правила:
+- Використовуй лише ті типи дій, які підтримують доступні способи керування.
+- Не пропонуй більше 4 дій за один цикл.
+- Якщо сцена не дає зрозумілого наступного кроку, поверни actions: [] і коротко поясни чому.
 """
     raw = brain.ask_aiya(prompt, format="json")
     try:
         data = json.loads(brain.clean_json_response(raw))
         if not isinstance(data, dict):
             return {"reasoning": "invalid response", "actions": []}
-        if not isinstance(data.get("actions", []), list):
-            data["actions"] = []
-        return data
+        filtered_actions = _filter_actions(data.get("actions", []), capabilities)
+        return {
+            "reasoning": (data.get("reasoning") or "no reasoning").strip(),
+            "actions": filtered_actions,
+        }
     except Exception:
         return {"reasoning": "fallback", "actions": []}
 

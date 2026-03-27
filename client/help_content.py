@@ -40,6 +40,8 @@
 6. Notes
 - OCR requires Tesseract installed on the client PC; set AIYA_TESSERACT_CMD if it is not in PATH
 - if you run from source, use the launcher's "Install Python Deps" button or scripts/client/install_client_prereqs.ps1
+- game mode needs fresh screen context; turn on Screen Always or press Capture Now before expecting actions
+- the default recommended TTS path is AIYA_TTS_PROVIDER=edge with a neural voice such as uk-UA-PolinaNeural
 - gamepad mode requires ViGEm / vgamepad support on the client PC
 - wiki module works on the backend side and needs outbound internet from the server side if you use public Wikipedia
 """

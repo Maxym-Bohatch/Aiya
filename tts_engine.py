@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import math
 import os
@@ -12,9 +13,16 @@ import requests
 
 from config import settings
 
+try:
+    import edge_tts
+except Exception:
+    edge_tts = None
+
 
 def voice_delivery_enabled() -> bool:
     if settings.tts_backend_url:
+        return True
+    if settings.tts_provider == "edge" and edge_tts is not None:
         return True
     return os.getenv("AIYA_ALLOW_LOCAL_TTS", "").strip().lower() in {"1", "true", "yes", "on"}
 
@@ -99,6 +107,24 @@ def _synthesize_via_backend(text: str) -> tuple[str, str, str]:
     return _write_backend_json(response.json())
 
 
+async def _edge_save(text: str, out_path: Path):
+    communicate = edge_tts.Communicate(
+        text,
+        voice=settings.tts_voice or "uk-UA-PolinaNeural",
+        rate=settings.tts_rate or "+0%",
+        pitch=settings.tts_pitch or "+0Hz",
+    )
+    await communicate.save(str(out_path))
+
+
+def _synthesize_via_edge(text: str) -> tuple[str, str, str]:
+    if edge_tts is None:
+        raise RuntimeError("edge-tts is not installed.")
+    out_path = _prepare_output_path(".mp3")
+    asyncio.run(_edge_save(text, out_path))
+    return str(out_path), "audio/mpeg", out_path.name
+
+
 def synthesize_to_wav(text: str) -> str:
     audio_path, _, _ = synthesize_to_audio_file(text)
     return audio_path
@@ -113,8 +139,16 @@ def synthesize_to_audio_file(text: str) -> tuple[str, str, str]:
         except Exception as exc:
             print(f"TTS backend error: {exc}")
 
+    if settings.tts_provider == "edge":
+        try:
+            return _synthesize_via_edge(prepared)
+        except Exception as exc:
+            print(f"Edge TTS error: {exc}")
+
     if not voice_delivery_enabled():
-        raise RuntimeError("High-quality TTS backend is not configured. Set TTS_BACKEND_URL or AIYA_ALLOW_LOCAL_TTS=true.")
+        raise RuntimeError(
+            "High-quality TTS backend is not configured. Set TTS_BACKEND_URL, keep AIYA_TTS_PROVIDER=edge with internet access, or explicitly allow the local fallback."
+        )
 
     out_path = _prepare_output_path(".wav")
 
@@ -123,7 +157,7 @@ def synthesize_to_audio_file(text: str) -> tuple[str, str, str]:
     pitch = 54 + fib[(len(prepared) + 2) % len(fib)] * 2
     word_gap = 3 + fib[(len(prepared) + 1) % len(fib)]
     amplitude = 115 + fib[(len(prepared) + 3) % len(fib)] * 2
-    voice = os.getenv("TTS_VOICE", "uk")
+    voice = settings.tts_voice or "uk"
 
     try:
         subprocess.run(
@@ -156,9 +190,11 @@ def synthesize_to_audio_file(text: str) -> tuple[str, str, str]:
 def tts_capabilities():
     return {
         "voice_style": "young-feminine",
-        "voice": os.getenv("TTS_VOICE", "uk"),
+        "voice": settings.tts_voice,
         "desktop_palette": "white-green",
         "enabled": bool(settings.enable_tts or settings.tts_backend_url),
         "delivery_enabled": voice_delivery_enabled(),
         "backend_url": bool(settings.tts_backend_url),
+        "provider": settings.tts_provider,
+        "edge_available": edge_tts is not None,
     }

@@ -10,3 +10,4 @@ aiohttp
 Pillow
 pytesseract
 vgamepad
+edge-tts
