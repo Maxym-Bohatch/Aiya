@@ -63,7 +63,14 @@ class AiyaDesktop:
         self.game_mode_enabled = False
         self.screen_mode = "manual"
         self.game_name = "unknown-game"
-        self.game_goal = "вижити і рухатись до цілі"
+        self.game_profile_name = "default"
+        self.game_session_id = None
+        self.game_last_plan = {}
+        self.game_last_actions = []
+        self.game_last_action_name = ""
+        self.game_last_executed_at = 0.0
+        self.game_auto_assess_enabled = True
+        self.game_goal = "stay alive and move toward the objective"
         self.last_ocr_text = ""
         self.last_screen_summary = ""
         self.last_translation_signature = ""
@@ -108,6 +115,18 @@ class AiyaDesktop:
         self.translation_target_lang = tk.StringVar(value=settings.client_translation_target_lang)
         self.ocr_langs_var = tk.StringVar(value=settings.ocr_languages)
         self.translation_status = tk.StringVar(value="Overlay translator: idle")
+        self.game_profile_var = tk.StringVar(value=self.game_profile_name)
+        self.game_play_mode_var = tk.StringVar(value="assist")
+        self.game_input_mode_var = tk.StringVar(value="hybrid")
+        self.game_interval_var = tk.StringVar(value="2200")
+        self.game_cooldown_var = tk.StringVar(value="900")
+        self.game_max_actions_var = tk.StringVar(value="2")
+        self.game_simulate_var = tk.BooleanVar(value=False)
+        self.game_confirm_var = tk.BooleanVar(value=False)
+        self.game_learning_var = tk.BooleanVar(value=True)
+        self.game_auto_assess_var = tk.BooleanVar(value=True)
+        self.game_profile_status = tk.StringVar(value="Game profile: default // assist")
+        self.game_learning_status = tk.StringVar(value="Game learning: idle")
         self.character_status = tk.StringVar(value="Character: loading")
         self.subtitle_overlay_status = tk.StringVar(value="Subtitles overlay: pending")
 
@@ -125,6 +144,7 @@ class AiyaDesktop:
         self._ensure_character_overlay()
         self._announce_runtime_status()
         self._sync_runtime_flags()
+        self.load_game_profile()
 
     def _configure_styles(self):
         style = ttk.Style()
@@ -212,6 +232,8 @@ class AiyaDesktop:
             self.ocr_status,
             self.tts_status,
             self.game_status,
+            self.game_profile_status,
+            self.game_learning_status,
             self.screen_mode_status,
             self.translation_status,
             self.character_status,
@@ -282,7 +304,46 @@ class AiyaDesktop:
         self.game_name_entry.pack(fill="x", padx=16, pady=(0, 8))
         self.game_goal_entry = tk.Entry(game_card, bg="#09150f", fg="#effff4", insertbackground="#90f5b6", relief="flat", font=("Segoe UI", 11))
         self.game_goal_entry.insert(0, self.game_goal)
-        self.game_goal_entry.pack(fill="x", padx=16, pady=(0, 12))
+        self.game_goal_entry.pack(fill="x", padx=16, pady=(0, 8))
+        profile_row = tk.Frame(game_card, bg="#111f18")
+        profile_row.pack(fill="x", padx=16, pady=(0, 8))
+        tk.Label(profile_row, text="Profile", bg="#111f18", fg="#badcc9", font=("Segoe UI", 10)).pack(side="left")
+        tk.Entry(profile_row, textvariable=self.game_profile_var, width=12, bg="#09150f", fg="#edfff4", insertbackground="#90f5b6", relief="flat").pack(side="left", padx=(8, 16))
+        tk.Label(profile_row, text="Mode", bg="#111f18", fg="#badcc9", font=("Segoe UI", 10)).pack(side="left")
+        ttk.Combobox(profile_row, textvariable=self.game_play_mode_var, width=10, values=("observe", "assist", "auto"), state="readonly").pack(side="left", padx=(8, 0))
+        timing_row = tk.Frame(game_card, bg="#111f18")
+        timing_row.pack(fill="x", padx=16, pady=(0, 8))
+        tk.Label(timing_row, text="Input", bg="#111f18", fg="#badcc9", font=("Segoe UI", 10)).pack(side="left")
+        ttk.Combobox(timing_row, textvariable=self.game_input_mode_var, width=9, values=("hybrid", "keyboard", "gamepad"), state="readonly").pack(side="left", padx=(8, 16))
+        tk.Label(timing_row, text="Step ms", bg="#111f18", fg="#badcc9", font=("Segoe UI", 10)).pack(side="left")
+        tk.Entry(timing_row, textvariable=self.game_interval_var, width=7, bg="#09150f", fg="#edfff4", insertbackground="#90f5b6", relief="flat").pack(side="left", padx=(8, 16))
+        tk.Label(timing_row, text="Cooldown", bg="#111f18", fg="#badcc9", font=("Segoe UI", 10)).pack(side="left")
+        tk.Entry(timing_row, textvariable=self.game_cooldown_var, width=7, bg="#09150f", fg="#edfff4", insertbackground="#90f5b6", relief="flat").pack(side="left", padx=(8, 0))
+        limit_row = tk.Frame(game_card, bg="#111f18")
+        limit_row.pack(fill="x", padx=16, pady=(0, 6))
+        tk.Label(limit_row, text="Actions/step", bg="#111f18", fg="#badcc9", font=("Segoe UI", 10)).pack(side="left")
+        tk.Entry(limit_row, textvariable=self.game_max_actions_var, width=5, bg="#09150f", fg="#edfff4", insertbackground="#90f5b6", relief="flat").pack(side="left", padx=(8, 16))
+        tk.Checkbutton(limit_row, text="Simulate only", variable=self.game_simulate_var, bg="#111f18", fg="#dfffe8", selectcolor="#09150f", activebackground="#111f18", activeforeground="#dfffe8").pack(side="left")
+        tk.Checkbutton(limit_row, text="Confirm", variable=self.game_confirm_var, bg="#111f18", fg="#dfffe8", selectcolor="#09150f", activebackground="#111f18", activeforeground="#dfffe8").pack(side="left", padx=(12, 0))
+        toggles_row = tk.Frame(game_card, bg="#111f18")
+        toggles_row.pack(fill="x", padx=16, pady=(0, 10))
+        tk.Checkbutton(toggles_row, text="Learning", variable=self.game_learning_var, bg="#111f18", fg="#dfffe8", selectcolor="#09150f", activebackground="#111f18", activeforeground="#dfffe8").pack(side="left")
+        tk.Checkbutton(toggles_row, text="Auto assess", variable=self.game_auto_assess_var, bg="#111f18", fg="#dfffe8", selectcolor="#09150f", activebackground="#111f18", activeforeground="#dfffe8").pack(side="left", padx=(12, 0))
+        game_grid = tk.Frame(game_card, bg="#111f18")
+        game_grid.pack(fill="x", padx=12, pady=(0, 12))
+        game_buttons = [
+            ("Save Profile", self.save_game_profile),
+            ("Load Profile", self.load_game_profile),
+            ("Good Move", lambda: self.send_game_feedback("good")),
+            ("Bad Move", lambda: self.send_game_feedback("bad")),
+            ("Goal Reached", lambda: self.send_game_feedback("goal")),
+            ("Stuck", lambda: self.send_game_feedback("stuck")),
+        ]
+        for index, (label, command) in enumerate(game_buttons):
+            row, col = divmod(index, 2)
+            ttk.Button(game_grid, text=label, command=command, style="Aiya.TButton").grid(row=row, column=col, sticky="ew", padx=4, pady=4)
+        game_grid.columnconfigure(0, weight=1)
+        game_grid.columnconfigure(1, weight=1)
 
         log_card = tk.Frame(parent, bg="#111f18", highlightbackground="#244233", highlightthickness=1)
         log_card.pack(fill="both", expand=True, pady=(14, 0))
@@ -386,6 +447,138 @@ class AiyaDesktop:
         self.log.insert("end", f"{speaker}: {text}\n\n")
         self.log.see("end")
 
+    def _int_from_var(self, value: str, default: int, min_value: int, max_value: int) -> int:
+        try:
+            parsed = int(str(value).strip())
+        except Exception:
+            parsed = default
+        return max(min_value, min(max_value, parsed))
+
+    def _current_game_settings(self) -> dict:
+        profile_name = self.game_profile_var.get().strip() or "default"
+        play_mode = (self.game_play_mode_var.get().strip() or "assist").lower()
+        autoplay = play_mode == "auto"
+        simulate_only = bool(self.game_simulate_var.get()) or play_mode == "observe"
+        return {
+            "profile_name": profile_name,
+            "autoplay": autoplay,
+            "simulate_only": simulate_only,
+            "require_confirmation": bool(self.game_confirm_var.get()),
+            "learning_enabled": bool(self.game_learning_var.get()),
+            "max_actions_per_step": self._int_from_var(self.game_max_actions_var.get(), 2, 0, 4),
+            "action_cooldown_ms": self._int_from_var(self.game_cooldown_var.get(), 900, 100, 5000),
+            "planner_interval_ms": self._int_from_var(self.game_interval_var.get(), 2200, 300, 12000),
+            "preferred_input_mode": self.game_input_mode_var.get().strip() or "hybrid",
+            "target_objective": self.game_goal_entry.get().strip(),
+            "notes": f"play_mode={play_mode}",
+            "profile_settings": {
+                "play_mode": play_mode,
+                "auto_assess": bool(self.game_auto_assess_var.get()),
+            },
+        }
+
+    def _apply_game_profile(self, profile: dict):
+        if not isinstance(profile, dict):
+            return
+        self.game_profile_var.set(profile.get("profile_name") or "default")
+        autoplay = bool(profile.get("autoplay", False))
+        simulate_only = bool(profile.get("simulate_only", False))
+        if simulate_only and not autoplay:
+            self.game_play_mode_var.set("observe")
+        else:
+            self.game_play_mode_var.set("auto" if autoplay else "assist")
+        self.game_input_mode_var.set(profile.get("preferred_input_mode") or "hybrid")
+        self.game_interval_var.set(str(profile.get("planner_interval_ms") or 2200))
+        self.game_cooldown_var.set(str(profile.get("action_cooldown_ms") or 900))
+        self.game_max_actions_var.set(str(profile.get("max_actions_per_step") or 2))
+        self.game_simulate_var.set(simulate_only)
+        self.game_confirm_var.set(bool(profile.get("require_confirmation", False)))
+        self.game_learning_var.set(bool(profile.get("learning_enabled", True)))
+        profile_settings = profile.get("profile_settings") or {}
+        self.game_auto_assess_var.set(bool(profile_settings.get("auto_assess", True)))
+        target_objective = profile.get("target_objective") or ""
+        if target_objective:
+            self.game_goal_entry.delete(0, "end")
+            self.game_goal_entry.insert(0, target_objective)
+        self.game_profile_status.set(
+            f"Game profile: {self.game_profile_var.get()} // {self.game_play_mode_var.get()} // {self.game_input_mode_var.get()}"
+        )
+
+    def save_game_profile(self):
+        self.game_name = self.game_name_entry.get().strip() or self.game_name
+        settings_map = self._current_game_settings()
+        try:
+            response = requests.post(
+                f"{self.api_url}/game/profile",
+                json={
+                    "platform": self.platform,
+                    "external_id": self.external_id,
+                    "user_name": self.user_name,
+                    "game_name": self.game_name,
+                    "profile_name": settings_map["profile_name"],
+                    "settings": settings_map,
+                },
+                timeout=30,
+            )
+            response.raise_for_status()
+            profile = response.json().get("profile", {})
+            self.root.after(0, lambda: self._apply_game_profile(profile))
+            self.root.after(0, lambda: self.append_log("game", f"Saved profile '{profile.get('profile_name', 'default')}' for {self.game_name}"))
+        except Exception as exc:
+            self.append_log("system", f"Could not save game profile: {exc}")
+
+    def load_game_profile(self):
+        self.game_name = self.game_name_entry.get().strip() or self.game_name
+        profile_name = self.game_profile_var.get().strip() or "default"
+        try:
+            response = requests.get(
+                f"{self.api_url}/game/profile/{self.platform}/{self.external_id}",
+                params={"game_name": self.game_name, "profile_name": profile_name, "user_name": self.user_name},
+                timeout=30,
+            )
+            response.raise_for_status()
+            profile = response.json()
+            self.root.after(0, lambda: self._apply_game_profile(profile))
+            self.root.after(0, lambda: self.append_log("game", f"Loaded profile '{profile_name}' for {self.game_name}"))
+        except Exception as exc:
+            self.append_log("system", f"Could not load game profile: {exc}")
+
+    def send_game_feedback(self, verdict: str, note: str = ""):
+        self.game_name = self.game_name_entry.get().strip() or self.game_name
+        self.game_goal = self.game_goal_entry.get().strip() or self.game_goal
+        action_payload = self.game_last_actions[0] if self.game_last_actions else {}
+        action_name = ""
+        if isinstance(action_payload, dict):
+            action_name = action_payload.get("control") or action_payload.get("type") or ""
+        try:
+            response = requests.post(
+                f"{self.api_url}/game/feedback",
+                json={
+                    "platform": self.platform,
+                    "external_id": self.external_id,
+                    "user_name": self.user_name,
+                    "game_name": self.game_name,
+                    "profile_name": self.game_profile_var.get().strip() or "default",
+                    "session_id": self.game_session_id,
+                    "verdict": verdict,
+                    "score": {"good": 1, "progressed": 1, "goal": 3, "bad": -1, "stuck": -2}.get(verdict, 0),
+                    "note": note,
+                    "screen_summary": self.last_screen_summary,
+                    "action_name": action_name,
+                    "action_payload": action_payload,
+                },
+                timeout=30,
+            )
+            response.raise_for_status()
+            payload = response.json()
+            session = payload.get("session") or {}
+            if session.get("session_id"):
+                self.game_session_id = session["session_id"]
+            self.game_learning_status.set(f"Game learning: {verdict} noted")
+            self.append_log("game-feedback", f"{verdict} recorded for {self.game_name}")
+        except Exception as exc:
+            self.append_log("system", f"Could not send game feedback: {exc}")
+
     def _announce_runtime_status(self):
         if not ImageGrab:
             self.append_log("system", "Pillow ImageGrab недоступний. Захоплення екрана не працюватиме.")
@@ -438,6 +631,8 @@ class AiyaDesktop:
         self.game_waiting_logged = False
         self.game_name = self.game_name_entry.get().strip() or self.game_name
         self.game_goal = self.game_goal_entry.get().strip() or self.game_goal
+        self.game_profile_name = self.game_profile_var.get().strip() or "default"
+        self.save_game_profile()
         if self.game_mode_enabled:
             self.set_screen_mode("always")
             self.capture_once()
@@ -445,6 +640,9 @@ class AiyaDesktop:
         else:
             self.append_log("system", "Game mode вимкнено.")
         self.game_status.set(f"Game mode: {'on' if self.game_mode_enabled else 'off'} ({self.game_name})")
+        self.game_profile_status.set(
+            f"Game profile: {self.game_profile_name} // {self.game_play_mode_var.get()} // {self.game_input_mode_var.get()}"
+        )
 
     def run_game_step_now(self):
         self.game_name = self.game_name_entry.get().strip() or self.game_name
@@ -454,7 +652,7 @@ class AiyaDesktop:
     def _capture_then_run_game_step(self):
         self._capture_and_send_if_changed(force=True)
         if self.last_screen_summary:
-            self._run_game_step()
+            self._run_game_step_v2()
         else:
             self.root.after(0, lambda: self.append_log("game", "Немає screen summary. Спершу потрібне успішне захоплення екрана."))
 
@@ -584,13 +782,16 @@ class AiyaDesktop:
         def loop():
             while True:
                 if self.game_mode_enabled:
+                    if (self.game_play_mode_var.get().strip().lower() or "assist") != "auto":
+                        time.sleep(0.25)
+                        continue
                     if self.last_screen_summary:
                         self.game_waiting_logged = False
-                        self._run_game_step()
+                        self._run_game_step_v2()
                     elif not self.game_waiting_logged:
                         self.game_waiting_logged = True
                         self.root.after(0, lambda: self.append_log("game", "Game mode чекає на свіжий screen summary. Натисни Capture Now або увімкни Screen Always."))
-                time.sleep(settings.performance.screen_summary_interval_seconds)
+                time.sleep(max(0.3, self._int_from_var(self.game_interval_var.get(), 2200, 300, 12000) / 1000.0))
 
         threading.Thread(target=loop, daemon=True).start()
 
@@ -683,6 +884,70 @@ class AiyaDesktop:
                 self.root.after(0, lambda action=action, ok=ok: self.append_log("game-exec", f"{action} => {'ok' if ok else 'unsupported'}"))
         except Exception as exc:
             self.root.after(0, lambda: self.append_log("system", f"game loop error: {exc}"))
+
+    def _run_game_step_v2(self):
+        try:
+            settings_map = self._current_game_settings()
+            self.game_profile_name = settings_map["profile_name"]
+            response = requests.post(
+                f"{self.api_url}/game/plan",
+                json={
+                    "platform": self.platform,
+                    "external_id": self.external_id,
+                    "user_name": self.user_name,
+                    "game_name": self.game_name,
+                    "profile_name": self.game_profile_name,
+                    "goal": self.game_goal,
+                    "screen_summary": self.last_screen_summary,
+                    "capabilities": self.backend.capabilities(),
+                    "settings": settings_map,
+                },
+                timeout=120,
+            )
+            response.raise_for_status()
+            data = response.json()
+            self.game_session_id = data.get("session_id") or self.game_session_id
+            plan = data.get("plan", {})
+            self.game_last_plan = plan
+            actions = plan.get("actions", [])
+            self.game_last_actions = actions
+            reasoning = plan.get("reasoning", "")
+            confidence = float(plan.get("confidence", 0.0) or 0.0)
+            self.root.after(0, lambda: self.append_log("game-plan", f"{reasoning or 'No new actions.'} // confidence={confidence:.2f}"))
+            play_mode = self.game_play_mode_var.get().strip().lower() or "assist"
+            if play_mode == "observe":
+                if actions:
+                    self.root.after(0, lambda: self.append_log("game-sim", f"Observe mode, planned only: {actions}"))
+                return
+            for action in actions:
+                if self.game_confirm_var.get():
+                    self.root.after(0, lambda action=action: self.append_log("game-confirm", f"Pending manual approval: {action}"))
+                    break
+                if self.game_simulate_var.get():
+                    ok = True
+                    self.root.after(0, lambda action=action: self.append_log("game-sim", f"Simulated: {action}"))
+                else:
+                    ok = self.backend.execute(action)
+                    self.game_last_action_name = action.get("control") or action.get("type") or ""
+                    self.game_last_executed_at = time.time()
+                    time.sleep(max(0.05, self._int_from_var(self.game_cooldown_var.get(), 900, 100, 5000) / 1000.0))
+                self.root.after(0, lambda action=action, ok=ok: self.append_log("game-exec", f"{action} => {'ok' if ok else 'unsupported'}"))
+            if actions and self.game_auto_assess_var.get() and not self.game_simulate_var.get():
+                threading.Thread(target=self._auto_assess_game_step, daemon=True).start()
+        except Exception as exc:
+            self.root.after(0, lambda: self.append_log("system", f"game loop error: {exc}"))
+
+    def _auto_assess_game_step(self):
+        previous_summary = self.last_screen_summary
+        time.sleep(max(0.4, self._int_from_var(self.game_cooldown_var.get(), 900, 100, 5000) / 1000.0))
+        self._capture_and_send_if_changed(force=True)
+        time.sleep(0.1)
+        new_summary = self.last_screen_summary
+        if not new_summary:
+            return
+        verdict = "stuck" if new_summary == previous_summary else "progressed"
+        note = "Scene changed after the last move." if verdict == "progressed" else "Scene did not change after the last move."
+        threading.Thread(target=self.send_game_feedback, args=(verdict, note), daemon=True).start()
 
     def translate_selected_region(self):
         self.translation_capture_mode = "region"

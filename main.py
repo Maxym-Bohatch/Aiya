@@ -76,9 +76,35 @@ class GameSessionRequest(BaseModel):
     external_id: int
     user_name: str
     game_name: str
+    profile_name: str = "default"
     goal: str = ""
     screen_summary: str = ""
     capabilities: Optional[dict] = None
+    settings: Optional[dict] = None
+
+
+class GameProfileRequest(BaseModel):
+    platform: str
+    external_id: int
+    user_name: str
+    game_name: str
+    profile_name: str = "default"
+    settings: dict
+
+
+class GameFeedbackRequest(BaseModel):
+    platform: str
+    external_id: int
+    user_name: str
+    game_name: str
+    profile_name: str = "default"
+    session_id: Optional[int] = None
+    verdict: str
+    score: int = 0
+    note: str = ""
+    screen_summary: str = ""
+    action_name: str = ""
+    action_payload: Optional[dict] = None
 
 
 class WikiRequest(BaseModel):
@@ -397,15 +423,29 @@ def game_plan(payload: GameSessionRequest):
     if user_id is None:
         raise HTTPException(status_code=404, detail="User not found")
 
-    session_id = db.create_or_get_game_session(user_id, payload.game_name, payload.goal)
+    if payload.settings:
+        db.upsert_game_profile(user_id, payload.game_name, payload.profile_name, payload.settings)
+    profile = db.get_game_profile(user_id, payload.game_name, payload.profile_name)
+    session_id = db.create_or_get_game_session(
+        user_id,
+        payload.game_name,
+        payload.goal,
+        profile_name=payload.profile_name,
+        metadata={"capabilities": payload.capabilities or {}, "profile": profile},
+    )
     db.log_game_event(session_id, event_type="screen", screen_summary=payload.screen_summary, outcome="observed")
     recent_events = db.get_recent_game_events(session_id, limit=8)
+    feedback_rows = db.get_recent_game_feedback(session_id, limit=6)
     plan = game_agent.build_game_action_plan(
+        user_id,
         payload.game_name,
         payload.goal,
         payload.screen_summary,
         recent_events,
         payload.capabilities,
+        profile_name=payload.profile_name,
+        profile=profile,
+        session_feedback=feedback_rows,
     )
     for action in plan.get("actions", []):
         db.log_game_event(
@@ -416,7 +456,77 @@ def game_plan(payload: GameSessionRequest):
             action_payload=action,
             outcome=plan.get("reasoning", ""),
         )
-    return {"session_id": session_id, "plan": plan}
+    return {"session_id": session_id, "profile": profile, "plan": plan}
+
+
+@app.get("/game/profile/{platform}/{external_id}")
+def get_game_profile(platform: str, external_id: int, game_name: str, profile_name: str = "default", user_name: str = "desktop"):
+    user_id = db.get_internal_user(platform, external_id, user_name)
+    if user_id is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    return db.get_game_profile(user_id, game_name, profile_name)
+
+
+@app.post("/game/profile")
+def save_game_profile(payload: GameProfileRequest):
+    user_id = db.get_internal_user(payload.platform, payload.external_id, payload.user_name)
+    if user_id is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    profile = db.upsert_game_profile(user_id, payload.game_name, payload.profile_name, payload.settings)
+    return {"ok": True, "profile": profile}
+
+
+@app.post("/game/feedback")
+def game_feedback(payload: GameFeedbackRequest):
+    user_id = db.get_internal_user(payload.platform, payload.external_id, payload.user_name)
+    if user_id is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    session_id = payload.session_id or db.create_or_get_game_session(
+        user_id,
+        payload.game_name,
+        goal="",
+        profile_name=payload.profile_name,
+    )
+    feedback_id = db.record_game_feedback(
+        session_id,
+        verdict=payload.verdict,
+        score=payload.score,
+        note=payload.note,
+        screen_summary=payload.screen_summary,
+        action_name=payload.action_name,
+        action_payload=payload.action_payload,
+    )
+    db.log_game_event(
+        session_id,
+        event_type="feedback",
+        screen_summary=payload.screen_summary,
+        action_name=payload.action_name,
+        action_payload=payload.action_payload,
+        outcome=f"{payload.verdict}:{payload.note}".strip(":"),
+    )
+    note_id = game_agent.reinforce_from_feedback(
+        user_id,
+        payload.game_name,
+        payload.profile_name,
+        payload.screen_summary,
+        payload.verdict,
+        payload.note,
+        payload.action_name,
+    )
+    if payload.verdict.lower() == "goal":
+        db.update_game_session_status(session_id, "completed", metadata={"last_verdict": payload.verdict})
+    elif payload.verdict.lower() == "stuck":
+        db.update_game_session_status(session_id, "running", metadata={"last_verdict": payload.verdict})
+    snapshot = db.get_game_session_snapshot(session_id)
+    return {"ok": True, "feedback_id": feedback_id, "learning_note_id": note_id, "session": snapshot}
+
+
+@app.get("/game/session/{session_id}")
+def game_session(session_id: int):
+    snapshot = db.get_game_session_snapshot(session_id)
+    if not snapshot:
+        raise HTTPException(status_code=404, detail="Game session not found")
+    return snapshot
 
 
 @app.post("/image/generate")

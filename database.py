@@ -605,51 +605,6 @@ def resolve_alias(user_id, name):
             conn.close()
 
 
-def create_or_get_game_session(user_id, game_name, goal=""):
-    conn = None
-    try:
-        conn = get_connection()
-        cur = conn.cursor()
-        cur.execute(
-            """
-            SELECT id
-            FROM aiya_game_sessions
-            WHERE user_id = %s AND game_name = %s AND status IN ('idle', 'running')
-            ORDER BY updated_at DESC
-            LIMIT 1
-            """,
-            (user_id, game_name),
-        )
-        row = cur.fetchone()
-        if row:
-            session_id = row[0]
-            cur.execute(
-                """
-                UPDATE aiya_game_sessions
-                SET goal = %s, updated_at = CURRENT_TIMESTAMP
-                WHERE id = %s
-                """,
-                (goal, session_id),
-            )
-            conn.commit()
-            return session_id
-
-        cur.execute(
-            """
-            INSERT INTO aiya_game_sessions (user_id, game_name, goal, status)
-            VALUES (%s, %s, %s, 'running')
-            RETURNING id
-            """,
-            (user_id, game_name, goal),
-        )
-        session_id = cur.fetchone()[0]
-        conn.commit()
-        return session_id
-    finally:
-        if conn:
-            conn.close()
-
-
 def log_game_event(session_id, event_type, screen_summary="", action_name="", action_payload=None, outcome=""):
     conn = None
     try:
@@ -689,6 +644,375 @@ def get_recent_game_events(session_id, limit=8):
         )
         rows = cur.fetchall()
         return list(reversed(rows))
+    finally:
+        if conn:
+            conn.close()
+
+
+DEFAULT_GAME_PROFILE = {
+    "profile_name": "default",
+    "autoplay": False,
+    "simulate_only": False,
+    "require_confirmation": False,
+    "learning_enabled": True,
+    "max_actions_per_step": 2,
+    "action_cooldown_ms": 900,
+    "planner_interval_ms": 2200,
+    "preferred_input_mode": "hybrid",
+    "target_objective": "",
+    "notes": "",
+    "profile_settings": {},
+}
+
+
+def get_game_profile(user_id, game_name, profile_name="default"):
+    conn = None
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT profile_name, autoplay, simulate_only, require_confirmation, learning_enabled,
+                   max_actions_per_step, action_cooldown_ms, planner_interval_ms,
+                   preferred_input_mode, target_objective, notes, profile_settings
+            FROM aiya_game_profiles
+            WHERE user_id = %s AND game_name = %s AND profile_name = %s
+            """,
+            (user_id, game_name, profile_name),
+        )
+        row = cur.fetchone()
+        if not row:
+            profile = dict(DEFAULT_GAME_PROFILE)
+            profile["profile_name"] = profile_name or "default"
+            return profile
+        return {
+            "profile_name": row[0],
+            "autoplay": bool(row[1]),
+            "simulate_only": bool(row[2]),
+            "require_confirmation": bool(row[3]),
+            "learning_enabled": bool(row[4]),
+            "max_actions_per_step": int(row[5] or 2),
+            "action_cooldown_ms": int(row[6] or 900),
+            "planner_interval_ms": int(row[7] or 2200),
+            "preferred_input_mode": row[8] or "hybrid",
+            "target_objective": row[9] or "",
+            "notes": row[10] or "",
+            "profile_settings": row[11] or {},
+        }
+    finally:
+        if conn:
+            conn.close()
+
+
+def upsert_game_profile(user_id, game_name, profile_name="default", settings_map=None):
+    settings_map = settings_map or {}
+    profile = dict(DEFAULT_GAME_PROFILE)
+    profile["profile_name"] = profile_name or "default"
+    profile.update({key: value for key, value in settings_map.items() if key in profile})
+    extra_settings = settings_map.get("profile_settings")
+    if extra_settings is None:
+        known_keys = set(profile.keys())
+        extra_settings = {key: value for key, value in settings_map.items() if key not in known_keys}
+    profile["profile_settings"] = extra_settings or {}
+
+    conn = None
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO aiya_game_profiles (
+                user_id, game_name, profile_name, autoplay, simulate_only,
+                require_confirmation, learning_enabled, max_actions_per_step,
+                action_cooldown_ms, planner_interval_ms, preferred_input_mode,
+                target_objective, notes, profile_settings
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (user_id, game_name, profile_name) DO UPDATE SET
+                autoplay = EXCLUDED.autoplay,
+                simulate_only = EXCLUDED.simulate_only,
+                require_confirmation = EXCLUDED.require_confirmation,
+                learning_enabled = EXCLUDED.learning_enabled,
+                max_actions_per_step = EXCLUDED.max_actions_per_step,
+                action_cooldown_ms = EXCLUDED.action_cooldown_ms,
+                planner_interval_ms = EXCLUDED.planner_interval_ms,
+                preferred_input_mode = EXCLUDED.preferred_input_mode,
+                target_objective = EXCLUDED.target_objective,
+                notes = EXCLUDED.notes,
+                profile_settings = EXCLUDED.profile_settings,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (
+                user_id,
+                game_name,
+                profile["profile_name"],
+                profile["autoplay"],
+                profile["simulate_only"],
+                profile["require_confirmation"],
+                profile["learning_enabled"],
+                profile["max_actions_per_step"],
+                profile["action_cooldown_ms"],
+                profile["planner_interval_ms"],
+                profile["preferred_input_mode"],
+                profile["target_objective"],
+                profile["notes"],
+                Json(profile["profile_settings"]),
+            ),
+        )
+        conn.commit()
+    finally:
+        if conn:
+            conn.close()
+    return get_game_profile(user_id, game_name, profile["profile_name"])
+
+
+def create_or_get_game_session(user_id, game_name, goal="", profile_name="default", metadata=None):
+    conn = None
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT id
+            FROM aiya_game_sessions
+            WHERE user_id = %s AND game_name = %s AND profile_name = %s AND status IN ('idle', 'running')
+            ORDER BY updated_at DESC
+            LIMIT 1
+            """,
+            (user_id, game_name, profile_name),
+        )
+        row = cur.fetchone()
+        if row:
+            session_id = row[0]
+            cur.execute(
+                """
+                UPDATE aiya_game_sessions
+                SET goal = %s, session_metadata = %s, updated_at = CURRENT_TIMESTAMP
+                WHERE id = %s
+                """,
+                (goal, Json(metadata or {}), session_id),
+            )
+            conn.commit()
+            return session_id
+
+        cur.execute(
+            """
+            INSERT INTO aiya_game_sessions (user_id, game_name, profile_name, goal, status, session_metadata)
+            VALUES (%s, %s, %s, %s, 'running', %s)
+            RETURNING id
+            """,
+            (user_id, game_name, profile_name, goal, Json(metadata or {})),
+        )
+        session_id = cur.fetchone()[0]
+        conn.commit()
+        return session_id
+    finally:
+        if conn:
+            conn.close()
+
+
+def update_game_session_status(session_id, status, metadata=None):
+    conn = None
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        if metadata is None:
+            cur.execute(
+                "UPDATE aiya_game_sessions SET status = %s, updated_at = CURRENT_TIMESTAMP WHERE id = %s",
+                (status, session_id),
+            )
+        else:
+            cur.execute(
+                """
+                UPDATE aiya_game_sessions
+                SET status = %s, session_metadata = session_metadata || %s::jsonb, updated_at = CURRENT_TIMESTAMP
+                WHERE id = %s
+                """,
+                (status, Json(metadata), session_id),
+            )
+        conn.commit()
+    finally:
+        if conn:
+            conn.close()
+
+
+def record_game_feedback(
+    session_id,
+    verdict,
+    score=0,
+    note="",
+    screen_summary="",
+    action_name="",
+    action_payload=None,
+):
+    conn = None
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO aiya_game_feedback (
+                session_id, verdict, score, note, screen_summary, action_name, action_payload
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
+            """,
+            (session_id, verdict, score, note, screen_summary, action_name, Json(action_payload or {})),
+        )
+        feedback_id = cur.fetchone()[0]
+        cur.execute(
+            "UPDATE aiya_game_sessions SET updated_at = CURRENT_TIMESTAMP WHERE id = %s",
+            (session_id,),
+        )
+        conn.commit()
+        return feedback_id
+    finally:
+        if conn:
+            conn.close()
+
+
+def get_recent_game_feedback(session_id, limit=6):
+    conn = None
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT verdict, score, note, screen_summary, action_name, action_payload, created_at
+            FROM aiya_game_feedback
+            WHERE session_id = %s
+            ORDER BY created_at DESC
+            LIMIT %s
+            """,
+            (session_id, limit),
+        )
+        return list(reversed(cur.fetchall()))
+    finally:
+        if conn:
+            conn.close()
+
+
+def save_game_learning_note(user_id, game_name, profile_name, cue, lesson, confidence=0.5, feedback=""):
+    cue = (cue or "").strip()[:240]
+    lesson = (lesson or "").strip()[:500]
+    if not cue or not lesson:
+        return None
+    conn = None
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO aiya_game_learning_notes (
+                user_id, game_name, profile_name, cue, lesson, confidence, last_feedback
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (user_id, game_name, profile_name, cue, lesson) DO UPDATE SET
+                confidence = LEAST(1.0, GREATEST(0.05, (aiya_game_learning_notes.confidence + EXCLUDED.confidence) / 2.0)),
+                times_reinforced = aiya_game_learning_notes.times_reinforced + 1,
+                last_feedback = EXCLUDED.last_feedback,
+                updated_at = CURRENT_TIMESTAMP
+            RETURNING id
+            """,
+            (user_id, game_name, profile_name, cue, lesson, confidence, feedback),
+        )
+        note_id = cur.fetchone()[0]
+        conn.commit()
+        return note_id
+    finally:
+        if conn:
+            conn.close()
+
+
+def get_game_learning_notes(user_id, game_name, profile_name="default", limit=6):
+    conn = None
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT cue, lesson, confidence, times_reinforced, last_feedback, updated_at
+            FROM aiya_game_learning_notes
+            WHERE user_id = %s AND game_name = %s AND profile_name = %s
+            ORDER BY confidence DESC, updated_at DESC
+            LIMIT %s
+            """,
+            (user_id, game_name, profile_name, limit),
+        )
+        return cur.fetchall()
+    finally:
+        if conn:
+            conn.close()
+
+
+def get_game_session_snapshot(session_id):
+    conn = None
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT id, user_id, game_name, profile_name, goal, status, session_metadata, created_at, updated_at
+            FROM aiya_game_sessions
+            WHERE id = %s
+            """,
+            (session_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        cur.execute(
+            """
+            SELECT verdict, score, note, action_name, created_at
+            FROM aiya_game_feedback
+            WHERE session_id = %s
+            ORDER BY created_at DESC
+            LIMIT 5
+            """,
+            (session_id,),
+        )
+        feedback = list(reversed(cur.fetchall()))
+        cur.execute(
+            """
+            SELECT event_type, action_name, outcome, created_at
+            FROM aiya_game_events
+            WHERE session_id = %s
+            ORDER BY created_at DESC
+            LIMIT 8
+            """,
+            (session_id,),
+        )
+        events = list(reversed(cur.fetchall()))
+        return {
+            "session_id": row[0],
+            "user_id": row[1],
+            "game_name": row[2],
+            "profile_name": row[3],
+            "goal": row[4],
+            "status": row[5],
+            "metadata": row[6] or {},
+            "created_at": row[7].isoformat() if row[7] else None,
+            "updated_at": row[8].isoformat() if row[8] else None,
+            "recent_feedback": [
+                {
+                    "verdict": item[0],
+                    "score": item[1],
+                    "note": item[2],
+                    "action_name": item[3],
+                    "created_at": item[4].isoformat() if item[4] else None,
+                }
+                for item in feedback
+            ],
+            "recent_events": [
+                {
+                    "event_type": item[0],
+                    "action_name": item[1],
+                    "outcome": item[2],
+                    "created_at": item[3].isoformat() if item[3] else None,
+                }
+                for item in events
+            ],
+        }
     finally:
         if conn:
             conn.close()

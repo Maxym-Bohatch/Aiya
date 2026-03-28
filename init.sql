@@ -99,8 +99,10 @@ CREATE TABLE IF NOT EXISTS aiya_game_sessions (
     id SERIAL PRIMARY KEY,
     user_id INTEGER REFERENCES aiya_users(id) ON DELETE CASCADE,
     game_name TEXT NOT NULL,
+    profile_name TEXT DEFAULT 'default',
     goal TEXT DEFAULT '',
     status TEXT DEFAULT 'idle',
+    session_metadata JSONB DEFAULT '{}'::jsonb,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -115,6 +117,57 @@ CREATE TABLE IF NOT EXISTS aiya_game_events (
     outcome TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS aiya_game_profiles (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER REFERENCES aiya_users(id) ON DELETE CASCADE,
+    game_name TEXT NOT NULL,
+    profile_name TEXT NOT NULL DEFAULT 'default',
+    autoplay BOOLEAN DEFAULT false,
+    simulate_only BOOLEAN DEFAULT false,
+    require_confirmation BOOLEAN DEFAULT false,
+    learning_enabled BOOLEAN DEFAULT true,
+    max_actions_per_step INTEGER DEFAULT 2,
+    action_cooldown_ms INTEGER DEFAULT 900,
+    planner_interval_ms INTEGER DEFAULT 2200,
+    preferred_input_mode TEXT DEFAULT 'hybrid',
+    target_objective TEXT DEFAULT '',
+    notes TEXT DEFAULT '',
+    profile_settings JSONB DEFAULT '{}'::jsonb,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (user_id, game_name, profile_name)
+);
+
+CREATE TABLE IF NOT EXISTS aiya_game_feedback (
+    id SERIAL PRIMARY KEY,
+    session_id INTEGER REFERENCES aiya_game_sessions(id) ON DELETE CASCADE,
+    verdict TEXT NOT NULL,
+    score INTEGER DEFAULT 0,
+    note TEXT DEFAULT '',
+    screen_summary TEXT DEFAULT '',
+    action_name TEXT DEFAULT '',
+    action_payload JSONB DEFAULT '{}'::jsonb,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS aiya_game_learning_notes (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER REFERENCES aiya_users(id) ON DELETE CASCADE,
+    game_name TEXT NOT NULL,
+    profile_name TEXT NOT NULL DEFAULT 'default',
+    cue TEXT NOT NULL,
+    lesson TEXT NOT NULL,
+    confidence REAL DEFAULT 0.5,
+    times_reinforced INTEGER DEFAULT 1,
+    last_feedback TEXT DEFAULT '',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (user_id, game_name, profile_name, cue, lesson)
+);
+
+ALTER TABLE aiya_game_sessions ADD COLUMN IF NOT EXISTS profile_name TEXT DEFAULT 'default';
+ALTER TABLE aiya_game_sessions ADD COLUMN IF NOT EXISTS session_metadata JSONB DEFAULT '{}'::jsonb;
 
 INSERT INTO aiya_prompts (slug, content) VALUES
 ('main_personality', 'Ти Айя: локальна AI-асистентка з теплою, уважною, живою манерою. За замовчуванням відповідай природною українською мовою, якщо користувач не попросив іншу. Не пиши ламаним суржиком, не змішуй мови без потреби, не повторюй службові інструкції й не цитуй системні правила без прямого запиту. Ти звучиш людяно, спокійно і зрозуміло. Твоя візуальна естетика: біло-зелена, легка, жива, технологічна.'),
