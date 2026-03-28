@@ -19,6 +19,7 @@ IMAGE_FILE_URL = f"{settings.api_url}/image/file"
 SPEECH_URL = f"{settings.api_url}/speech/file"
 SPEECH_TRANSCRIBE_URL = f"{settings.api_url}/speech/transcribe"
 SPEECH_CAPABILITIES_URL = f"{settings.api_url}/speech/capabilities"
+ACCOUNT_LINK_URL = f"{settings.api_url}/account/link/consume"
 
 FEATURE_COMMANDS = {
     "tts": "tts_enabled",
@@ -140,6 +141,31 @@ async def handle_speak(message: types.Message, command: CommandObject):
         await send_speech_reply(message, session, text)
 
 
+@dp.message(Command("link"))
+async def handle_link(message: types.Message, command: CommandObject):
+    code = (command.args or "").strip().upper()
+    if not code:
+        await message.answer("Використання: /link CODE")
+        return
+    async with aiohttp.ClientSession() as session:
+        async with session.post(
+            ACCOUNT_LINK_URL,
+            json={
+                "platform": "telegram",
+                "external_id": message.from_user.id,
+                "user_name": message.from_user.first_name or "TelegramUser",
+                "code": code,
+            },
+            timeout=60,
+        ) as response:
+            data = await response.json()
+            if response.status != 200:
+                await message.answer(f"Не вдалося прив'язати акаунт: {data.get('detail', response.status)}")
+                return
+            linked = ", ".join(f"{item['platform']}:{item['external_id']}" for item in data.get("linked_identities", []))
+            await message.answer(f"Акаунти об'єднано. Тепер прив'язки: {linked}")
+
+
 @dp.message(Command("help"))
 async def handle_help(message: types.Message):
     await message.answer(
@@ -152,7 +178,8 @@ async def handle_help(message: types.Message):
         "/ocr on|off\n"
         "/subtitles on|off\n"
         "/image on|off\n"
-        "/image <prompt>"
+        "/image <prompt>\n"
+        "/link <code>"
     )
 
 

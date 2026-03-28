@@ -8,6 +8,7 @@ from pathlib import Path
 
 import psycopg2
 
+from installer.update_manager import update_installation
 
 PROJECT_DIR = Path(__file__).resolve().parent
 ENV_PATH = PROJECT_DIR / ".env"
@@ -257,6 +258,13 @@ class Handler(BaseHTTPRequestHandler):
             result = update_config_values(payload.get("updates", {}), bool(payload.get("restart_services", True)))
             code = HTTPStatus.OK if result.get("ok") else HTTPStatus.BAD_REQUEST
             self._json(code, result)
+            return
+        if self.path == "/update":
+            try:
+                result = update_installation(PROJECT_DIR)
+                self._json(HTTPStatus.OK, result)
+            except Exception as exc:
+                self._json(HTTPStatus.BAD_REQUEST, {"ok": False, "message": str(exc)})
             return
         self._json(HTTPStatus.NOT_FOUND, {"ok": False, "message": "Not found"})
 

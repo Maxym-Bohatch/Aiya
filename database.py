@@ -1,4 +1,5 @@
 from pathlib import Path
+import secrets
 
 import psycopg2
 from psycopg2.extras import Json
@@ -67,6 +68,319 @@ def get_internal_user(platform, external_id, username_hint="User"):
         if conn:
             conn.rollback()
         return None
+    finally:
+        if conn:
+            conn.close()
+
+
+def get_linked_identities(user_id):
+    conn = None
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT platform_name, external_id
+            FROM aiya_social_links
+            WHERE user_internal_id = %s
+            ORDER BY platform_name, external_id
+            """,
+            (user_id,),
+        )
+        return [{"platform": row[0], "external_id": int(row[1])} for row in cur.fetchall()]
+    finally:
+        if conn:
+            conn.close()
+
+
+def create_account_link_code(user_id, label="", ttl_minutes=20):
+    conn = None
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        code = secrets.token_hex(3).upper()
+        cur.execute(
+            """
+            INSERT INTO aiya_account_link_codes (code, owner_user_id, label, expires_at)
+            VALUES (%s, %s, %s, CURRENT_TIMESTAMP + (%s || ' minutes')::interval)
+            """,
+            (code, user_id, (label or "").strip(), max(5, min(ttl_minutes, 120))),
+        )
+        conn.commit()
+        cur.execute(
+            """
+            SELECT expires_at
+            FROM aiya_account_link_codes
+            WHERE code = %s
+            """,
+            (code,),
+        )
+        row = cur.fetchone()
+        return {"code": code, "expires_at": row[0].isoformat() if row and row[0] else ""}
+    finally:
+        if conn:
+            conn.close()
+
+
+def _merge_settings(cur, source_user_id, target_user_id):
+    cur.execute(
+        """
+        SELECT tts_enabled, ocr_enabled, emoji_enabled, desktop_subtitles_enabled, image_generation_enabled
+        FROM aiya_user_settings
+        WHERE user_id = %s
+        """,
+        (source_user_id,),
+    )
+    source = cur.fetchone()
+    cur.execute(
+        """
+        SELECT tts_enabled, ocr_enabled, emoji_enabled, desktop_subtitles_enabled, image_generation_enabled
+        FROM aiya_user_settings
+        WHERE user_id = %s
+        """,
+        (target_user_id,),
+    )
+    target = cur.fetchone()
+    merged = (
+        bool((target or [False])[0] or (source or [False])[0]),
+        bool((target or [False, False])[1] or (source or [False, False])[1]),
+        bool((target or [False, False, True])[2] or (source or [False, False, True])[2]),
+        bool((target or [False, False, False, True])[3] or (source or [False, False, False, True])[3]),
+        bool((target or [False, False, False, False, False])[4] or (source or [False, False, False, False, False])[4]),
+    )
+    cur.execute(
+        """
+        INSERT INTO aiya_user_settings (
+            user_id, tts_enabled, ocr_enabled, emoji_enabled, desktop_subtitles_enabled, image_generation_enabled
+        )
+        VALUES (%s, %s, %s, %s, %s, %s)
+        ON CONFLICT (user_id) DO UPDATE SET
+            tts_enabled = EXCLUDED.tts_enabled,
+            ocr_enabled = EXCLUDED.ocr_enabled,
+            emoji_enabled = EXCLUDED.emoji_enabled,
+            desktop_subtitles_enabled = EXCLUDED.desktop_subtitles_enabled,
+            image_generation_enabled = EXCLUDED.image_generation_enabled
+        """,
+        (target_user_id, *merged),
+    )
+
+
+def _merge_state(cur, source_user_id, target_user_id):
+    cur.execute("SELECT mood, internal_goals FROM aiya_state WHERE user_id = %s", (source_user_id,))
+    source = cur.fetchone()
+    cur.execute("SELECT mood, internal_goals FROM aiya_state WHERE user_id = %s", (target_user_id,))
+    target = cur.fetchone()
+    merged_mood = (target[0] if target and target[0] else (source[0] if source else "stable")) or "stable"
+    merged_goals = "\n".join(part for part in [target[1] if target else "", source[1] if source else ""] if part).strip()
+    cur.execute(
+        """
+        INSERT INTO aiya_state (user_id, mood, internal_goals)
+        VALUES (%s, %s, %s)
+        ON CONFLICT (user_id) DO UPDATE SET
+            mood = EXCLUDED.mood,
+            internal_goals = EXCLUDED.internal_goals,
+            last_updated = CURRENT_TIMESTAMP
+        """,
+        (target_user_id, merged_mood, merged_goals),
+    )
+
+
+def merge_users(source_user_id, target_user_id):
+    if source_user_id == target_user_id:
+        return {"merged": False, "user_id": target_user_id}
+
+    conn = None
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+
+        cur.execute(
+            """
+            UPDATE aiya_social_links
+            SET user_internal_id = %s
+            WHERE user_internal_id = %s
+            """,
+            (target_user_id, source_user_id),
+        )
+
+        cur.execute(
+            """
+            INSERT INTO aiya_facts (user_id, fact_text, embedding, required_level, use_count, last_used_at, recall_cooldown_until, created_at)
+            SELECT %s, fact_text, embedding, required_level, use_count, last_used_at, recall_cooldown_until, created_at
+            FROM aiya_facts
+            WHERE user_id = %s
+            ON CONFLICT (user_id, fact_text)
+            DO UPDATE SET
+                required_level = GREATEST(aiya_facts.required_level, EXCLUDED.required_level),
+                use_count = GREATEST(aiya_facts.use_count, EXCLUDED.use_count),
+                last_used_at = GREATEST(aiya_facts.last_used_at, EXCLUDED.last_used_at),
+                recall_cooldown_until = GREATEST(aiya_facts.recall_cooldown_until, EXCLUDED.recall_cooldown_until)
+            """,
+            (target_user_id, source_user_id),
+        )
+        cur.execute("DELETE FROM aiya_facts WHERE user_id = %s", (source_user_id,))
+
+        for table_name in ("aiya_chat_history", "aiya_screen_observations", "aiya_game_sessions"):
+            cur.execute(f"UPDATE {table_name} SET user_id = %s WHERE user_id = %s", (target_user_id, source_user_id))
+
+        cur.execute(
+            """
+            INSERT INTO aiya_aliases (user_id, alias, canonical_name, created_at)
+            SELECT %s, alias, canonical_name, created_at
+            FROM aiya_aliases
+            WHERE user_id = %s
+            ON CONFLICT (user_id, alias) DO UPDATE SET canonical_name = EXCLUDED.canonical_name
+            """,
+            (target_user_id, source_user_id),
+        )
+        cur.execute("DELETE FROM aiya_aliases WHERE user_id = %s", (source_user_id,))
+
+        cur.execute(
+            """
+            INSERT INTO aiya_data_consents (owner_user_id, grantee_user_id, can_access_private, updated_at)
+            SELECT
+                CASE WHEN owner_user_id = %s THEN %s ELSE owner_user_id END,
+                CASE WHEN grantee_user_id = %s THEN %s ELSE grantee_user_id END,
+                can_access_private,
+                updated_at
+            FROM aiya_data_consents
+            WHERE owner_user_id = %s OR grantee_user_id = %s
+            ON CONFLICT (owner_user_id, grantee_user_id)
+            DO UPDATE SET
+                can_access_private = aiya_data_consents.can_access_private OR EXCLUDED.can_access_private,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (source_user_id, target_user_id, source_user_id, target_user_id, source_user_id, source_user_id),
+        )
+        cur.execute(
+            """
+            DELETE FROM aiya_data_consents
+            WHERE owner_user_id = %s OR grantee_user_id = %s
+            """,
+            (source_user_id, source_user_id),
+        )
+
+        cur.execute(
+            """
+            INSERT INTO aiya_game_profiles (
+                user_id, game_name, profile_name, autoplay, simulate_only, require_confirmation,
+                learning_enabled, max_actions_per_step, action_cooldown_ms, planner_interval_ms,
+                preferred_input_mode, target_objective, notes, profile_settings, created_at, updated_at
+            )
+            SELECT %s, game_name, profile_name, autoplay, simulate_only, require_confirmation,
+                   learning_enabled, max_actions_per_step, action_cooldown_ms, planner_interval_ms,
+                   preferred_input_mode, target_objective, notes, profile_settings, created_at, updated_at
+            FROM aiya_game_profiles
+            WHERE user_id = %s
+            ON CONFLICT (user_id, game_name, profile_name) DO NOTHING
+            """,
+            (target_user_id, source_user_id),
+        )
+        cur.execute("DELETE FROM aiya_game_profiles WHERE user_id = %s", (source_user_id,))
+
+        cur.execute(
+            """
+            INSERT INTO aiya_game_learning_notes (
+                user_id, game_name, profile_name, cue, lesson, confidence, times_reinforced,
+                last_feedback, created_at, updated_at
+            )
+            SELECT %s, game_name, profile_name, cue, lesson, confidence, times_reinforced,
+                   last_feedback, created_at, updated_at
+            FROM aiya_game_learning_notes
+            WHERE user_id = %s
+            ON CONFLICT (user_id, game_name, profile_name, cue, lesson)
+            DO UPDATE SET
+                confidence = GREATEST(aiya_game_learning_notes.confidence, EXCLUDED.confidence),
+                times_reinforced = aiya_game_learning_notes.times_reinforced + EXCLUDED.times_reinforced,
+                last_feedback = EXCLUDED.last_feedback,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (target_user_id, source_user_id),
+        )
+        cur.execute("DELETE FROM aiya_game_learning_notes WHERE user_id = %s", (source_user_id,))
+
+        _merge_settings(cur, source_user_id, target_user_id)
+        _merge_state(cur, source_user_id, target_user_id)
+
+        cur.execute(
+            """
+            SELECT username, profile_summary, clearance_level
+            FROM aiya_users
+            WHERE id = %s
+            """,
+            (source_user_id,),
+        )
+        source_user = cur.fetchone()
+        cur.execute(
+            """
+            SELECT username, profile_summary, clearance_level
+            FROM aiya_users
+            WHERE id = %s
+            """,
+            (target_user_id,),
+        )
+        target_user = cur.fetchone()
+        merged_username = (target_user[0] if target_user and target_user[0] else (source_user[0] if source_user else "User")) or "User"
+        merged_summary = "\n".join(
+            part for part in [target_user[1] if target_user else "", source_user[1] if source_user else ""] if part
+        ).strip()[:1800]
+        merged_level = max(target_user[2] if target_user else 1, source_user[2] if source_user else 1)
+        cur.execute(
+            """
+            UPDATE aiya_users
+            SET username = %s, profile_summary = %s, clearance_level = %s
+            WHERE id = %s
+            """,
+            (merged_username, merged_summary or "Новий користувач.", merged_level, target_user_id),
+        )
+
+        cur.execute("DELETE FROM aiya_account_link_codes WHERE owner_user_id = %s", (source_user_id,))
+        cur.execute("DELETE FROM aiya_users WHERE id = %s", (source_user_id,))
+
+        conn.commit()
+        return {"merged": True, "user_id": target_user_id}
+    except Exception:
+        if conn:
+            conn.rollback()
+        raise
+    finally:
+        if conn:
+            conn.close()
+
+
+def link_user_by_code(current_user_id, code):
+    conn = None
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT owner_user_id
+            FROM aiya_account_link_codes
+            WHERE code = %s
+              AND consumed_at IS NULL
+              AND expires_at >= CURRENT_TIMESTAMP
+            """,
+            ((code or "").strip().upper(),),
+        )
+        row = cur.fetchone()
+        if not row:
+            return {"ok": False, "message": "Link code is invalid or expired."}
+        owner_user_id = row[0]
+        cur.execute(
+            """
+            UPDATE aiya_account_link_codes
+            SET consumed_at = CURRENT_TIMESTAMP
+            WHERE code = %s
+            """,
+            ((code or "").strip().upper(),),
+        )
+        conn.commit()
+        if owner_user_id == current_user_id:
+            return {"ok": True, "message": "This account is already linked.", "user_id": owner_user_id}
+        result = merge_users(current_user_id, owner_user_id)
+        result.update({"ok": True, "message": "Accounts were linked successfully."})
+        return result
     finally:
         if conn:
             conn.close()

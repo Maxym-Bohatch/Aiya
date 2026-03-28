@@ -184,6 +184,7 @@ class AppConfig:
     tts_pitch: str = (os.getenv("AIYA_TTS_PITCH") or "+0Hz").strip()
     translation_model_name: str = (os.getenv("AIYA_TRANSLATION_MODEL") or "").strip()
     stt_model_name: str = (os.getenv("AIYA_STT_MODEL") or "whisper-1").strip()
+    stt_local_model_name: str = (os.getenv("AIYA_STT_LOCAL_MODEL") or "tiny").strip()
     hardware_class: str = detect_hardware_class()
     performance_profile_name: str = select_profile_name()
 

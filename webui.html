@@ -222,6 +222,17 @@
             <span class="pill">"що ти пам'ятаєш?"</span>
           </div>
         </div>
+        <div class="subcard">
+          <h2>Account Link</h2>
+          <div class="status">
+            <div><strong>Linked IDs:</strong> <span id="linked-identities">loading...</span></div>
+          </div>
+          <div class="controls">
+            <button id="make-link" class="secondary">Generate Link Code</button>
+            <input id="link-code" placeholder="Enter code from Telegram or desktop">
+            <button id="apply-link">Link This Account</button>
+          </div>
+        </div>
       </div>
     </aside>
 
@@ -261,6 +272,9 @@
     const sendButton = document.getElementById("send");
     const refreshButton = document.getElementById("refresh");
     const startTelegramButton = document.getElementById("start-telegram");
+    const makeLinkButton = document.getElementById("make-link");
+    const applyLinkButton = document.getElementById("apply-link");
+    const linkCodeBox = document.getElementById("link-code");
 
     const storedId = localStorage.getItem("aiya-web-user-id") || String(Math.floor(100000 + Math.random() * 900000));
     externalIdBox.value = storedId;
@@ -272,6 +286,14 @@
       item.textContent = text;
       chat.appendChild(item);
       chat.scrollTop = chat.scrollHeight;
+    }
+
+    function currentIdentity() {
+      return {
+        platform: platformBox.value.trim() || "web",
+        external_id: Number(externalIdBox.value.trim() || storedId),
+        user_name: userNameBox.value.trim() || "WebUser"
+      };
     }
 
     async function loadStatus() {
@@ -297,6 +319,66 @@
       } catch (error) {
         document.getElementById("health-label").textContent = "Не вдалося прочитати стан";
         errorBox.textContent = error.message;
+      }
+      await loadIdentity();
+    }
+
+    async function loadIdentity() {
+      try {
+        const params = new URLSearchParams({ user_name: currentIdentity().user_name });
+        const response = await fetch(`/users/${currentIdentity().platform}/${currentIdentity().external_id}/identity?${params}`);
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data.detail || JSON.stringify(data));
+        }
+        document.getElementById("linked-identities").textContent =
+          (data.linked_identities || []).map((item) => `${item.platform}:${item.external_id}`).join(", ") || "only current identity";
+      } catch (error) {
+        document.getElementById("linked-identities").textContent = `error: ${error.message}`;
+      }
+    }
+
+    async function generateLinkCode() {
+      makeLinkButton.disabled = true;
+      try {
+        const response = await fetch("/account/link/code", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...currentIdentity(), label: "web-ui" })
+        });
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data.detail || JSON.stringify(data));
+        }
+        linkCodeBox.value = data.code || "";
+        addMessage("aiya", `Код прив'язки: ${data.code}. Введи його в Telegram через /link або в desktop client.`);
+      } catch (error) {
+        errorBox.textContent = error.message;
+      } finally {
+        makeLinkButton.disabled = false;
+      }
+    }
+
+    async function applyLinkCode() {
+      const code = linkCodeBox.value.trim().toUpperCase();
+      if (!code) return;
+      applyLinkButton.disabled = true;
+      try {
+        const response = await fetch("/account/link/consume", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...currentIdentity(), code })
+        });
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data.detail || JSON.stringify(data));
+        }
+        addMessage("aiya", "Акаунт успішно прив'язано. Пам'ять і профіль тепер спільні між каналами.");
+        await loadIdentity();
+      } catch (error) {
+        errorBox.textContent = error.message;
+      } finally {
+        applyLinkButton.disabled = false;
       }
     }
 
@@ -356,6 +438,8 @@
     sendButton.addEventListener("click", sendPrompt);
     refreshButton.addEventListener("click", loadStatus);
     startTelegramButton.addEventListener("click", startTelegram);
+    makeLinkButton.addEventListener("click", generateLinkCode);
+    applyLinkButton.addEventListener("click", applyLinkCode);
     promptBox.addEventListener("keydown", (event) => {
       if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
         sendPrompt();

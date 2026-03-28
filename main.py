@@ -63,6 +63,20 @@ class AliasPatch(BaseModel):
     canonical_name: str
 
 
+class AccountIdentity(BaseModel):
+    platform: str
+    external_id: int
+    user_name: str
+
+
+class AccountLinkCodeRequest(AccountIdentity):
+    label: str = ""
+
+
+class AccountLinkConsumeRequest(AccountIdentity):
+    code: str
+
+
 class ScreenObservation(BaseModel):
     platform: str
     external_id: int
@@ -441,6 +455,36 @@ def add_alias(platform: str, external_id: int, payload: AliasPatch):
         raise HTTPException(status_code=404, detail="User not found")
     db.upsert_alias(user_id, payload.alias, payload.canonical_name)
     return {"ok": True, "alias": payload.alias, "canonical_name": payload.canonical_name}
+
+
+@app.get("/users/{platform}/{external_id}/identity")
+def get_identity(platform: str, external_id: int, user_name: str = "User"):
+    user_id = db.get_internal_user(platform, external_id, user_name)
+    if user_id is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    linked = db.get_linked_identities(user_id)
+    return {"ok": True, "user_id": user_id, "linked_identities": linked}
+
+
+@app.post("/account/link/code")
+def create_account_link_code(payload: AccountLinkCodeRequest):
+    user_id = db.get_internal_user(payload.platform, payload.external_id, payload.user_name)
+    if user_id is None:
+        raise HTTPException(status_code=404, detail="User mapping failed")
+    result = db.create_account_link_code(user_id, label=payload.label or payload.platform)
+    return {"ok": True, "user_id": user_id, **result}
+
+
+@app.post("/account/link/consume")
+def consume_account_link_code(payload: AccountLinkConsumeRequest):
+    user_id = db.get_internal_user(payload.platform, payload.external_id, payload.user_name)
+    if user_id is None:
+        raise HTTPException(status_code=404, detail="User mapping failed")
+    result = db.link_user_by_code(user_id, payload.code)
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail=result.get("message", "Linking failed"))
+    linked = db.get_linked_identities(result.get("user_id", user_id))
+    return {**result, "linked_identities": linked}
 
 
 @app.post("/screen/observe")

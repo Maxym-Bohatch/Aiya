@@ -12,6 +12,7 @@ from tkinter import messagebox, ttk
 from installer.common import create_scrollable_frame
 from installer.server_env import write_server_env
 from installer.server_setup import ServerSetupDialog
+from installer.update_manager import update_installation
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 ENV_PATH = PROJECT_ROOT / ".env"
@@ -70,6 +71,7 @@ class AiyaServerLauncher:
             ("Start Server", self.start_server),
             ("Stop Server", self.stop_server),
             ("Rebuild Docker", self.rebuild_server),
+            ("Update Aiya", self.update_installation_files),
             ("Check Docker", self.check_docker),
             ("Install Docker Desktop", self.install_docker_desktop),
             ("Open Docker Desktop", self.open_docker_desktop),
@@ -275,6 +277,25 @@ class AiyaServerLauncher:
             "Rebuilding Aiya docker stack",
             ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(PROJECT_ROOT / "scripts/server/rebuild_docker.ps1")],
         )
+
+    def update_installation_files(self):
+        if self._running:
+            self._append_log("Another launcher task is already running. Wait for it to finish first.")
+            return
+
+        def worker():
+            self._running = True
+            self._set_status("Updating Aiya files")
+            try:
+                result = update_installation(PROJECT_ROOT)
+                self._append_log_async(f"Update completed from {result.get('repo_url')} [{result.get('branch')}]")
+            except Exception as exc:
+                self._append_log_async(f"Update failed: {exc}")
+            finally:
+                self._running = False
+                self._set_status("Ready")
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def check_docker(self):
         def worker():
