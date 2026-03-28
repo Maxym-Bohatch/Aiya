@@ -7,6 +7,7 @@ bundle_dir = Path('bundle')
 
 datas = [
     ('dist/AiyaClientLauncher.exe', 'bundle'),
+    ('dist/AiyaServerLauncher.exe', 'bundle'),
     ('dist/AiyaUninstaller.exe', 'bundle'),
     ('.env.client.example', 'bundle'),
     ('docs/CLIENT_SETUP.md', 'bundle'),

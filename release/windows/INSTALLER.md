@@ -4,13 +4,15 @@ Use `AiyaInstaller.exe` when you want a single bootstrap installer.
 
 Installer options:
 - Client only: installs the ready desktop launcher executable plus the client-side source/scripts.
-- Server only: downloads the repo snapshot and installs the Docker/backend side.
-- Client + Server: installs the whole repo plus the ready client launcher executable.
+- Server only: downloads the repo snapshot, installs the Docker/backend side, and includes `AiyaServerLauncher.exe`.
+- Client + Server: installs the whole repo plus the ready client and server launcher executables.
 
 For `Server only` and `Client + Server`:
 - the installer can check Docker / WSL presence
 - the installer can launch Docker Desktop installation through `winget`
 - the installed folder also contains `Install Docker For Server.cmd`
+- the installer forces the first server `.env` setup before the backend can be started
+- a Desktop shortcut points directly to `AiyaServerLauncher.exe`, so users can start or rebuild the Docker stack without opening a console
 
 The installer downloads the selected GitHub branch as a zip snapshot and writes `INSTALL_INFO.json`.
 It also copies `AiyaUninstaller.exe` into the install folder.
