@@ -6,6 +6,8 @@ from pathlib import Path
 import tkinter as tk
 from tkinter import messagebox, ttk
 
+from installer.common import bind_entry_clipboard_shortcuts, enable_mousewheel_scrolling, validate_telegram_token
+
 
 def generate_secret(length: int = 24) -> str:
     return secrets.token_urlsafe(length)[:length]
@@ -41,7 +43,7 @@ class ServerSetupDialog:
         self.chat_model_var = tk.StringVar(value="qwen2.5:3b")
         self.embed_model_var = tk.StringVar(value="nomic-embed-text")
         self.vision_model_var = tk.StringVar(value="llava:7b")
-        self.translation_model_var = tk.StringVar()
+        self.translation_model_var = tk.StringVar(value="qwen2.5:3b")
         self.enable_tts_var = tk.BooleanVar(value=True)
         self.enable_ocr_var = tk.BooleanVar(value=False)
         self.enable_vision_var = tk.BooleanVar(value=True)
@@ -71,15 +73,20 @@ class ServerSetupDialog:
         canvas.configure(yscrollcommand=scrollbar.set)
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
+        enable_mousewheel_scrolling(canvas, self.top)
 
         required_box = ttk.LabelFrame(content, text="Required Access")
         required_box.pack(fill="x", pady=(0, 10))
-        self._entry(required_box, "Telegram token", self.telegram_token_var, 0, show="*")
-        self._entry(required_box, "Database password", self.db_password_var, 1, show="*")
-        self._entry(required_box, "Admin token", self.admin_token_var, 2, show="*")
+        self._entry(required_box, "Telegram token", self.telegram_token_var, 0, show="*", allow_paste=True)
+        self._entry(required_box, "Database password", self.db_password_var, 1, show="*", allow_paste=True)
+        self._entry(required_box, "Admin token", self.admin_token_var, 2, show="*", allow_paste=True)
         self._entry(required_box, "Extra admin tokens", self.extra_admin_tokens_var, 3)
-        self._entry(required_box, "Host control token", self.host_control_token_var, 4, show="*")
-        ttk.Button(required_box, text="Regenerate secrets", command=self._regenerate_secrets).grid(row=5, column=1, sticky="w", pady=(6, 10))
+        self._entry(required_box, "Host control token", self.host_control_token_var, 4, show="*", allow_paste=True)
+        actions_row = ttk.Frame(required_box)
+        actions_row.grid(row=5, column=1, sticky="w", pady=(6, 10))
+        ttk.Button(actions_row, text="Paste Telegram token", command=lambda: self._paste_into(self.telegram_token_var)).pack(side="left")
+        ttk.Button(actions_row, text="Validate Telegram token", command=self._validate_telegram_token).pack(side="left", padx=(8, 0))
+        ttk.Button(actions_row, text="Regenerate secrets", command=self._regenerate_secrets).pack(side="left", padx=(8, 0))
 
         runtime_box = ttk.LabelFrame(content, text="Server Runtime")
         runtime_box.pack(fill="x", pady=(0, 10))
@@ -120,7 +127,12 @@ class ServerSetupDialog:
         self._entry(models_box, "Chat model", self.chat_model_var, 0)
         self._entry(models_box, "Embed model", self.embed_model_var, 1)
         self._entry(models_box, "Vision model", self.vision_model_var, 2)
-        self._entry(models_box, "Translation model (optional)", self.translation_model_var, 3)
+        self._entry(models_box, "Translation model", self.translation_model_var, 3)
+        ttk.Label(
+            models_box,
+            text="If you leave the translation model empty, Aiya will reuse the chat model automatically.",
+            wraplength=620,
+        ).grid(row=4, column=0, columnspan=2, sticky="w", padx=(0, 10), pady=(0, 6))
 
         finish_box = ttk.LabelFrame(content, text="After Install")
         finish_box.pack(fill="x", pady=(0, 10))
@@ -137,10 +149,27 @@ class ServerSetupDialog:
 
         self.top.protocol("WM_DELETE_WINDOW", self._cancel)
 
-    def _entry(self, parent, label: str, variable: tk.StringVar, row: int, show: str | None = None):
+    def _entry(self, parent, label: str, variable: tk.StringVar, row: int, show: str | None = None, allow_paste: bool = False):
         ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", padx=(0, 10), pady=6)
-        ttk.Entry(parent, textvariable=variable, width=54, show=show or "").grid(row=row, column=1, sticky="ew", pady=6)
+        entry = ttk.Entry(parent, textvariable=variable, width=54, show=show or "")
+        entry.grid(row=row, column=1, sticky="ew", pady=6)
+        bind_entry_clipboard_shortcuts(entry)
+        if allow_paste:
+            ttk.Button(parent, text="Paste", command=lambda v=variable: self._paste_into(v)).grid(row=row, column=2, sticky="w", padx=(8, 0))
         parent.columnconfigure(1, weight=1)
+
+    def _paste_into(self, variable: tk.StringVar):
+        try:
+            variable.set(self.top.clipboard_get())
+        except Exception as exc:
+            messagebox.showerror("Server Setup", f"Could not paste from clipboard: {exc}")
+
+    def _validate_telegram_token(self):
+        ok, message = validate_telegram_token(self.telegram_token_var.get())
+        if ok:
+            messagebox.showinfo("Server Setup", message)
+        else:
+            messagebox.showerror("Server Setup", message)
 
     def _regenerate_secrets(self):
         self.db_password_var.set(generate_secret())
@@ -174,6 +203,10 @@ class ServerSetupDialog:
         if not telegram_token:
             messagebox.showerror("Server Setup", "Telegram token is required for the current backend package.")
             return
+        ok, message = validate_telegram_token(telegram_token)
+        if not ok:
+            messagebox.showerror("Server Setup", message)
+            return
         if not db_password:
             messagebox.showerror("Server Setup", "Database password is required.")
             return
@@ -202,7 +235,7 @@ class ServerSetupDialog:
             "chat_model": self.chat_model_var.get().strip(),
             "embed_model": self.embed_model_var.get().strip(),
             "vision_model": self.vision_model_var.get().strip(),
-            "translation_model": self.translation_model_var.get().strip(),
+            "translation_model": self.translation_model_var.get().strip() or self.chat_model_var.get().strip(),
             "enable_tts": self.enable_tts_var.get(),
             "enable_ocr": self.enable_ocr_var.get(),
             "enable_vision": self.enable_vision_var.get(),

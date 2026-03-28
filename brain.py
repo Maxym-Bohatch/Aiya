@@ -17,6 +17,24 @@ FIBONACCI_TTS_PROFILE = {
 }
 
 
+def normalize_text_value(value, fallback: str = "") -> str:
+    if value is None:
+        return fallback
+    if isinstance(value, str):
+        normalized = value.strip()
+        return normalized or fallback
+    if isinstance(value, list):
+        parts = [normalize_text_value(item, "") for item in value]
+        normalized = " ".join(part for part in parts if part).strip()
+        return normalized or fallback
+    if isinstance(value, dict):
+        for key in ("text", "value", "content", "query", "prompt"):
+            if key in value:
+                return normalize_text_value(value.get(key), fallback)
+    normalized = str(value).strip()
+    return normalized or fallback
+
+
 def clean_json_response(res_text: str) -> str:
     return (res_text or "").strip().replace("```json", "").replace("```", "")
 
@@ -134,7 +152,7 @@ def needs_active_search(text: str):
         data = json.loads(clean_json_response(response))
         return {
             "needs_search": bool(data.get("needs_search", False)),
-            "search_query": data.get("search_query", text),
+            "search_query": normalize_text_value(data.get("search_query"), text),
         }
     except Exception as exc:
         print(f"Dispatcher error: {exc}")

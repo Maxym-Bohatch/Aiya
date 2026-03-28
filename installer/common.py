@@ -6,6 +6,8 @@ import shutil
 import sys
 from pathlib import Path
 
+import requests
+
 INSTALL_INFO_NAME = "INSTALL_INFO.json"
 
 
@@ -55,3 +57,59 @@ def schedule_self_delete(exe_path: Path, target_dir: Path | None = None):
     commands.append(f'del /f /q "{script_path}"')
     script_path.write_text("\r\n".join(commands), encoding="utf-8")
     os.startfile(str(script_path))
+
+
+def validate_telegram_token(token: str, timeout_seconds: int = 15) -> tuple[bool, str]:
+    normalized = (token or "").strip()
+    if not normalized:
+        return False, "Telegram token is empty."
+    try:
+        response = requests.get(
+            f"https://api.telegram.org/bot{normalized}/getMe",
+            timeout=timeout_seconds,
+        )
+        payload = response.json() if response.headers.get("Content-Type", "").startswith("application/json") else {}
+        if response.ok and payload.get("ok"):
+            bot_name = payload.get("result", {}).get("username") or payload.get("result", {}).get("first_name") or "unknown bot"
+            return True, f"Telegram token is valid ({bot_name})."
+        description = payload.get("description") or f"HTTP {response.status_code}"
+        return False, f"Telegram rejected the token: {description}"
+    except Exception as exc:
+        return False, f"Could not verify Telegram token: {exc}"
+
+
+def bind_entry_clipboard_shortcuts(widget):
+    def _paste(_event=None):
+        try:
+            value = widget.clipboard_get()
+        except Exception:
+            return "break"
+        widget.insert("insert", value)
+        return "break"
+
+    widget.bind("<Control-v>", _paste, add="+")
+    widget.bind("<Control-V>", _paste, add="+")
+    widget.bind("<Shift-Insert>", _paste, add="+")
+
+
+def enable_mousewheel_scrolling(canvas, root):
+    def _scroll(event):
+        if event.delta:
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        elif getattr(event, "num", None) == 4:
+            canvas.yview_scroll(-1, "units")
+        elif getattr(event, "num", None) == 5:
+            canvas.yview_scroll(1, "units")
+
+    def _bind(_event=None):
+        root.bind_all("<MouseWheel>", _scroll)
+        root.bind_all("<Button-4>", _scroll)
+        root.bind_all("<Button-5>", _scroll)
+
+    def _unbind(_event=None):
+        root.unbind_all("<MouseWheel>")
+        root.unbind_all("<Button-4>")
+        root.unbind_all("<Button-5>")
+
+    canvas.bind("<Enter>", _bind)
+    canvas.bind("<Leave>", _unbind)

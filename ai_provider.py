@@ -3,6 +3,25 @@ import requests
 from config import settings
 
 
+def _coerce_text(value) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, list):
+        parts = []
+        for item in value:
+            if isinstance(item, dict):
+                if item.get("type") == "text":
+                    parts.append(str(item.get("text", "")))
+                elif "content" in item:
+                    parts.append(str(item.get("content", "")))
+            else:
+                parts.append(str(item))
+        return "\n".join(part for part in parts if part).strip()
+    return str(value).strip()
+
+
 def _is_openai_compatible() -> bool:
     return settings.llm_provider == "openai_compatible"
 
@@ -80,7 +99,7 @@ def _chat_ollama(
         timeout=timeout_seconds or settings.performance.llm_timeout_seconds,
     )
     response.raise_for_status()
-    return response.json().get("response", "")
+    return _coerce_text(response.json().get("response", ""))
 
 
 def _chat_openai_compatible(
@@ -114,24 +133,27 @@ def _chat_openai_compatible(
     if not choices:
         return ""
     message = choices[0].get("message") or {}
-    content = message.get("content", "")
-    if isinstance(content, list):
-        parts = []
-        for item in content:
-            if isinstance(item, dict) and item.get("type") == "text":
-                parts.append(item.get("text", ""))
-        return "\n".join(part for part in parts if part).strip()
-    return str(content or "").strip()
+    return _coerce_text(message.get("content", ""))
 
 
 def _embedding_ollama(text: str) -> list[float]:
-    response = requests.post(
-        f"{settings.ollama_host}/api/embeddings",
-        json={"model": settings.embed_model, "prompt": text},
-        timeout=30,
-    )
-    response.raise_for_status()
-    return response.json()["embedding"]
+    payloads = [
+        (f"{settings.ollama_host}/api/embed", {"model": settings.embed_model, "input": text}),
+        (f"{settings.ollama_host}/api/embeddings", {"model": settings.embed_model, "prompt": text}),
+    ]
+    last_error = None
+    for url, payload in payloads:
+        try:
+            response = requests.post(url, json=payload, timeout=30)
+            response.raise_for_status()
+            data = response.json()
+            if isinstance(data.get("embeddings"), list) and data["embeddings"]:
+                return data["embeddings"][0]
+            if isinstance(data.get("embedding"), list):
+                return data["embedding"]
+        except Exception as exc:
+            last_error = exc
+    raise RuntimeError(f"Ollama embedding request failed: {last_error}")
 
 
 def _embedding_openai_compatible(text: str) -> list[float]:
@@ -163,7 +185,7 @@ def _vision_ollama(image_b64: str, instruction: str) -> str:
         timeout=settings.performance.llm_timeout_seconds,
     )
     response.raise_for_status()
-    return response.json().get("response", "").strip()
+    return _coerce_text(response.json().get("response", ""))
 
 
 def _vision_openai_compatible(image_b64: str, instruction: str) -> str:
@@ -195,4 +217,4 @@ def _vision_openai_compatible(image_b64: str, instruction: str) -> str:
     if not choices:
         return ""
     message = choices[0].get("message") or {}
-    return str(message.get("content") or "").strip()
+    return _coerce_text(message.get("content"))

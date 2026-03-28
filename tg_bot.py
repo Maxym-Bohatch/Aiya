@@ -2,6 +2,7 @@ import asyncio
 
 import aiohttp
 from aiogram import Bot, Dispatcher, types
+from aiogram.exceptions import TelegramUnauthorizedError
 from aiogram.filters import Command, CommandObject
 from aiogram.types import BufferedInputFile
 
@@ -187,8 +188,12 @@ async def handle_tg_message(message: types.Message):
 
 
 async def main():
-    print("Telegram bot started")
-    await dp.start_polling(bot)
+    try:
+        print("Telegram bot started")
+        await dp.start_polling(bot)
+    except TelegramUnauthorizedError:
+        print("Telegram bot token is invalid. Fix TELEGRAM_TOKEN in .env and restart the bot.")
+        await asyncio.sleep(300)
 
 
 if __name__ == "__main__":

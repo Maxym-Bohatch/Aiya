@@ -102,17 +102,17 @@ def translate_text(text: str, source_lang: str = "auto", target_lang: str = "uk"
     try:
         if settings.translation_backend_url:
             return _translate_via_backend(normalized, source_lang, target_lang)
-        if GoogleTranslator is not None:
-            try:
-                result = _translate_via_google(normalized, source_lang, target_lang)
-                if result.get("translation"):
-                    return result
-            except Exception:
-                pass
         result = _translate_via_ollama(normalized, source_lang, target_lang)
         translated = (result.get("translation") or "").strip()
         if translated and translated.lower() != normalized.lower():
             return result
+        if GoogleTranslator is not None:
+            try:
+                google_result = _translate_via_google(normalized, source_lang, target_lang)
+                if google_result.get("translation"):
+                    return google_result
+            except Exception:
+                pass
         return {
             "ok": True,
             "translation": translated or normalized,

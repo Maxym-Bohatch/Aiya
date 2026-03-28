@@ -15,6 +15,7 @@ import requests
 from client.env_tools import ensure_defaults, generate_secure_token, parse_env_file, save_env_file
 from client.help_content import HELP_TEXT
 from client.system_checks import CheckResult, find_tesseract_path, format_check_report, list_tesseract_languages, run_client_checks
+from installer.common import bind_entry_clipboard_shortcuts, enable_mousewheel_scrolling
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG_PATH = PROJECT_ROOT / ".env.client"
@@ -72,11 +73,6 @@ SERVER_SECRET_FIELDS = [
     ("AIYA_ALLOW_LOCAL_TTS", "Allow Local TTS"),
     ("OLLAMA_CHAT_MODEL", "Chat Model"),
     ("AIYA_TRANSLATION_MODEL", "Translation Model"),
-    ("AIYA_TTS_PROVIDER", "TTS Provider"),
-    ("TTS_VOICE", "TTS Voice"),
-    ("AIYA_TTS_RATE", "TTS Rate"),
-    ("AIYA_TTS_PITCH", "TTS Pitch"),
-    ("AIYA_ALLOW_LOCAL_TTS", "Allow Local TTS"),
 ]
 
 
@@ -238,37 +234,51 @@ class AiyaClientLauncher:
             ("Desktop External ID", "AIYA_CLIENT_EXTERNAL_ID"),
             ("Desktop Platform", "AIYA_CLIENT_PLATFORM"),
         ]
-        for index, (label, key) in enumerate(rows):
-            ttk.Label(self.admin_tab, text=label, style="Aiya.TLabel").grid(row=index, column=0, sticky="w", pady=6, padx=(0, 12))
-            show = "*" if "TOKEN" in key else ""
-            ttk.Entry(self.admin_tab, textvariable=self.connection_vars[key], width=72, show=show).grid(row=index, column=1, sticky="ew", pady=6)
-        self.admin_tab.columnconfigure(1, weight=1)
+        canvas = tk.Canvas(self.admin_tab, highlightthickness=0, bg="#f4efe6")
+        scrollbar = ttk.Scrollbar(self.admin_tab, orient="vertical", command=canvas.yview)
+        content = ttk.Frame(canvas, style="Aiya.TFrame", padding=2)
+        content.bind("<Configure>", lambda event: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.create_window((0, 0), window=content, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        enable_mousewheel_scrolling(canvas, self.root)
 
-        actions = ttk.Frame(self.admin_tab, style="Aiya.TFrame")
+        for index, (label, key) in enumerate(rows):
+            ttk.Label(content, text=label, style="Aiya.TLabel").grid(row=index, column=0, sticky="w", pady=6, padx=(0, 12))
+            show = "*" if "TOKEN" in key else ""
+            entry = ttk.Entry(content, textvariable=self.connection_vars[key], width=72, show=show)
+            entry.grid(row=index, column=1, sticky="ew", pady=6)
+            bind_entry_clipboard_shortcuts(entry)
+        content.columnconfigure(1, weight=1)
+
+        actions = ttk.Frame(content, style="Aiya.TFrame")
         actions.grid(row=len(rows), column=0, columnspan=2, sticky="w", pady=(10, 10))
         ttk.Button(actions, text="Generate Admin Token", command=self.generate_admin_token, style="Aiya.TButton").pack(side="left", padx=(0, 8))
         ttk.Button(actions, text="Generate Host Token", command=self.generate_host_token, style="Aiya.TButton").pack(side="left", padx=(0, 8))
         ttk.Button(actions, text="Load Desktop Features", command=self.load_desktop_features, style="Aiya.TButton").pack(side="left", padx=(0, 8))
         ttk.Button(actions, text="Apply Desktop Features", command=self.apply_desktop_features, style="Aiya.TButton").pack(side="left")
 
-        feature_box = ttk.LabelFrame(self.admin_tab, text="Desktop Feature Flags")
+        feature_box = ttk.LabelFrame(content, text="Desktop Feature Flags")
         feature_box.grid(row=len(rows) + 1, column=0, columnspan=2, sticky="ew")
         for index, (key, label) in enumerate(FEATURE_FIELDS):
             ttk.Checkbutton(feature_box, text=label, variable=self.feature_vars[key]).grid(row=index // 3, column=index % 3, sticky="w", padx=10, pady=8)
 
-        server_box = ttk.LabelFrame(self.admin_tab, text="Server Secrets And Tokens")
+        server_box = ttk.LabelFrame(content, text="Server Secrets And Tokens")
         server_box.grid(row=len(rows) + 2, column=0, columnspan=2, sticky="ew", pady=(12, 0))
         for index, (key, label) in enumerate(SERVER_SECRET_FIELDS):
             ttk.Label(server_box, text=label).grid(row=index, column=0, sticky="w", padx=(10, 8), pady=6)
             show = "*" if "TOKEN" in key or "PASSWORD" in key or "API_KEY" in key else ""
-            ttk.Entry(server_box, textvariable=self.server_config_vars[key], width=60, show=show).grid(row=index, column=1, sticky="ew", padx=(0, 10), pady=6)
+            entry = ttk.Entry(server_box, textvariable=self.server_config_vars[key], width=60, show=show)
+            entry.grid(row=index, column=1, sticky="ew", padx=(0, 10), pady=6)
+            bind_entry_clipboard_shortcuts(entry)
         server_box.columnconfigure(1, weight=1)
         server_actions = ttk.Frame(server_box, style="Aiya.TFrame")
         server_actions.grid(row=len(SERVER_SECRET_FIELDS), column=0, columnspan=2, sticky="w", padx=10, pady=(4, 10))
         ttk.Button(server_actions, text="Load Server Config", command=self.load_server_config, style="Aiya.TButton").pack(side="left", padx=(0, 8))
         ttk.Button(server_actions, text="Apply Server Config", command=self.apply_server_config, style="Aiya.TButton").pack(side="left")
 
-        notes = self._make_readonly_text(self.admin_tab, height=7)
+        notes = self._make_readonly_text(content, height=7)
         notes.grid(row=len(rows) + 3, column=0, columnspan=2, sticky="nsew", pady=(12, 0))
         notes.insert(
             "1.0",
@@ -276,7 +286,7 @@ class AiyaClientLauncher:
             "Extra admins are stored as a comma-separated token list in AIYA_EXTRA_ADMIN_TOKENS.\n\n"
             "DB password rotation is applied on the running PostgreSQL instance before the .env file is rewritten.",
         )
-        self.admin_tab.rowconfigure(len(rows) + 3, weight=1)
+        content.rowconfigure(len(rows) + 3, weight=1)
 
     def _build_docker_tab(self):
         ttk.Label(self.docker_tab, text="Use the host bridge to manage Docker services and inspect host capabilities.", style="Aiya.TLabel").pack(anchor="w", pady=(0, 10))
