@@ -119,6 +119,30 @@ class TranslationRequest(BaseModel):
     target_language: str = "uk"
 
 
+class RobotSensorFrame(BaseModel):
+    source: str
+    sensor_type: str
+    payload: dict
+
+
+class RobotCommandRequest(BaseModel):
+    target: str
+    command_type: str
+    payload: dict = {}
+
+
+class RobotCommandComplete(BaseModel):
+    status: str = "completed"
+    result_payload: Optional[dict] = None
+
+
+class RobotStatePatch(BaseModel):
+    profile_name: Optional[str] = None
+    body_mode: Optional[str] = None
+    notes: Optional[str] = None
+    state_payload: Optional[dict] = None
+
+
 UI_PATH = Path(__file__).with_name("webui.html")
 
 
@@ -164,9 +188,11 @@ def coding_language_hint(text: str) -> str:
     return ""
 
 
-def build_coding_answer(user_text: str) -> str:
+def build_coding_answer(user_text: str, system_prompt: str = "") -> str:
     language_hint = coding_language_hint(user_text) or "follow the user's request"
     prompt = (
+        (system_prompt.strip() + "\n\n" if system_prompt.strip() else "")
+        +
         "You are a careful senior developer.\n"
         "Solve the user's request with one complete code block only.\n"
         "Rules:\n"
@@ -191,26 +217,21 @@ def build_coding_answer(user_text: str) -> str:
     return ""
 
 
-def build_general_answer(user_text: str) -> str:
-    translated_request = translation_engine.translate_text(user_text, source_lang="auto", target_lang="en")
-    request_for_model = (translated_request.get("translation") or user_text).strip()
+def build_general_answer(user_text: str, system_prompt: str) -> str:
     prompt = (
-        "You are Aiya, a helpful assistant.\n"
-        "Answer briefly, clearly, and practically in English.\n"
-        "Do not mention translation, OCR, or unrelated problems.\n"
-        "If the question is simple, answer simply.\n\n"
-        f"User request: {request_for_model}"
+        f"{system_prompt.strip()}\n\n"
+        "Поточне завдання: дай корисну, коротку, фактичну і природну відповідь користувачу.\n"
+        "Якщо частина контексту прийшла з wiki-context, використовуй її як довідковий фактологічний матеріал.\n"
+        "Якщо релевантних спогадів мало, не вигадуй зайвого.\n\n"
+        f"Запит користувача:\n{user_text}"
     )
-    answer_en = brain.ask_aiya(
+    answer = brain.ask_aiya(
         prompt,
         timeout_seconds=min(settings.performance.llm_timeout_seconds, 90),
         temperature=0.2,
-        num_predict=160,
+        num_predict=260,
     ).strip()
-    if not answer_en:
-        return ""
-    translated_answer = translation_engine.translate_text(answer_en, source_lang="auto", target_lang="uk")
-    return (translated_answer.get("translation") or answer_en).strip()
+    return answer
 
 
 async def get_aiya_token(x_aiya_token: str = Header(default=None)):
@@ -227,6 +248,7 @@ def background_processing_task(internal_id: int, user_name: str, text: str, leve
                 continue
             vector = brain.get_embedding(fact_text)
             db.save_fact(internal_id, fact_text, vector, level=fact_level)
+        db.refresh_user_profile_summary(internal_id)
 
         graph_data = brain.extract_entities_and_relations(text)
         if graph_data.get("to_add") or graph_data.get("to_remove"):
@@ -252,7 +274,10 @@ def startup():
 def health():
     return {
         "status": "ok",
+        "llm_mode": settings.llm_mode,
+        "llm_provider": settings.llm_provider,
         "ollama_host": settings.ollama_host,
+        "llm_base_url": settings.llm_base_url if settings.llm_provider == "openai_compatible" else "",
         "features": {
             "tts": settings.enable_tts,
             "ocr": settings.enable_ocr,
@@ -266,10 +291,12 @@ def health():
         },
         "performance": settings.performance.name,
         "hardware_class": settings.hardware_class,
-        "chat_model": settings.ollama_chat_model,
+        "chat_model": settings.chat_model,
         "translation_model": settings.translation_model,
+        "vision_model": settings.vision_model,
         "tts": tts_capabilities(),
         "service_control": service_control.capabilities(include_remote=False),
+        "robot_bridge": {"enabled": True},
     }
 
 
@@ -318,15 +345,29 @@ async def ask_aiya(query: Query, background_tasks: BackgroundTasks, x_token: str
         screen_context = db.get_recent_screen_context(internal_id, limit=2) if settings.enable_screen_context else ""
         user_summary, user_level = db.get_user_profile(internal_id, query.user_name)
         current_mood, prompt_addon = db.get_user_state(internal_id)
+        graph_context = db.find_graph_context(internal_id, search_query, limit=4)
+        wiki_context = wiki_engine.get_wiki_context(search_query, language="uk", limit=2)
+        combined_memories = list(memories) + list(graph_context) + list(wiki_context)
         coding_addon = coding_prompt_addon(query.text)
         if coding_addon:
             prompt_addon = f"{prompt_addon}\n{coding_addon}".strip()
+        if wiki_context:
+            prompt_addon = f"{prompt_addon}\nВикористай wiki-context обережно як зовнішню довідку.".strip()
         user_settings = db.get_user_settings(internal_id)
+        system_prompt = brain.build_system_prompt(
+            user_summary=user_summary,
+            current_mood=current_mood,
+            prompt_addon=prompt_addon,
+            memories=combined_memories,
+            recent_logs=recent_logs,
+            user_level=user_level,
+            screen_context=screen_context,
+        )
 
         if coding_addon:
-            answer = build_coding_answer(query.text)
+            answer = build_coding_answer(query.text, system_prompt=system_prompt)
         else:
-            answer = build_general_answer(query.text)
+            answer = build_general_answer(query.text, system_prompt=system_prompt)
         if not answer:
             answer = "Я трохи зависла. Спробуй перефразувати або повторити запит."
 
@@ -343,7 +384,8 @@ async def ask_aiya(query: Query, background_tasks: BackgroundTasks, x_token: str
             "tts_available": bool(user_settings.get("tts_enabled", False))
             and bool((settings.enable_tts or settings.tts_backend_url) and voice_delivery_enabled()),
             "image_generation_available": settings.enable_image_generation and user_settings.get("image_generation_enabled", False),
-            "chat_model": settings.ollama_chat_model,
+            "chat_model": settings.chat_model,
+            "llm_provider": settings.llm_provider,
         }
     except HTTPException:
         raise
@@ -602,6 +644,61 @@ def wiki_search(payload: WikiRequest):
     if not result.get("ok"):
         raise HTTPException(status_code=503, detail=result.get("message", "Wiki search failed"))
     return result
+
+
+@app.get("/robot/capabilities")
+def robot_capabilities():
+    return {
+        "enabled": True,
+        "control_modes": ["gamepad", "keyboard", "robot_api"],
+        "sensor_ingest": ["/robot/sensors", "/screen/observe", "/screen/analyze-image"],
+        "command_queue": ["/robot/commands", "/robot/commands/next", "/robot/commands/{id}/complete"],
+        "state_endpoints": ["/robot/state"],
+        "note": "Use this bridge to attach future camera, sensor, telemetry, and actuator modules without hardcoding specific hardware into Aiya core.",
+    }
+
+
+@app.get("/robot/state")
+def get_robot_state():
+    return db.get_robot_state()
+
+
+@app.patch("/robot/state")
+def patch_robot_state(payload: RobotStatePatch):
+    return db.update_robot_state(
+        profile_name=payload.profile_name,
+        body_mode=payload.body_mode,
+        notes=payload.notes,
+        state_payload=payload.state_payload,
+    )
+
+
+@app.post("/robot/sensors")
+def post_robot_sensor(payload: RobotSensorFrame):
+    saved = db.save_robot_sensor_frame(payload.source, payload.sensor_type, payload.payload)
+    return {"ok": True, **saved}
+
+
+@app.get("/robot/sensors/recent")
+def recent_robot_sensors(limit: int = 20):
+    return {"items": db.get_recent_robot_sensor_frames(limit=max(1, min(limit, 100)))}
+
+
+@app.post("/robot/commands")
+def queue_robot_command(payload: RobotCommandRequest):
+    saved = db.queue_robot_command(payload.target, payload.command_type, payload.payload)
+    return {"ok": True, **saved}
+
+
+@app.get("/robot/commands/next")
+def next_robot_command(target: str):
+    command = db.claim_next_robot_command(target)
+    return {"ok": bool(command), "command": command}
+
+
+@app.post("/robot/commands/{command_id}/complete")
+def complete_robot_command(command_id: int, payload: RobotCommandComplete):
+    return db.complete_robot_command(command_id, status=payload.status, result_payload=payload.result_payload)
 
 
 @app.post("/translate")

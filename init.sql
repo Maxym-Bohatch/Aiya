@@ -53,6 +53,17 @@ CREATE TABLE IF NOT EXISTS aiya_graph (
     UNIQUE(user_id, subject, relation, object)
 );
 
+CREATE TABLE IF NOT EXISTS aiya_wiki_cache (
+    id SERIAL PRIMARY KEY,
+    query TEXT NOT NULL,
+    language TEXT DEFAULT 'uk',
+    title TEXT NOT NULL,
+    description TEXT DEFAULT '',
+    extract TEXT DEFAULT '',
+    url TEXT DEFAULT '',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS aiya_prompts (
     slug TEXT PRIMARY KEY,
     content TEXT
@@ -166,6 +177,35 @@ CREATE TABLE IF NOT EXISTS aiya_game_learning_notes (
     UNIQUE (user_id, game_name, profile_name, cue, lesson)
 );
 
+CREATE TABLE IF NOT EXISTS aiya_robot_state (
+    id INTEGER PRIMARY KEY DEFAULT 1,
+    profile_name TEXT DEFAULT 'default',
+    body_mode TEXT DEFAULT 'idle',
+    notes TEXT DEFAULT '',
+    state_payload JSONB DEFAULT '{}'::jsonb,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS aiya_robot_sensor_frames (
+    id SERIAL PRIMARY KEY,
+    source TEXT NOT NULL,
+    sensor_type TEXT NOT NULL,
+    payload JSONB DEFAULT '{}'::jsonb,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS aiya_robot_command_queue (
+    id SERIAL PRIMARY KEY,
+    target TEXT NOT NULL,
+    command_type TEXT NOT NULL,
+    payload JSONB DEFAULT '{}'::jsonb,
+    status TEXT DEFAULT 'queued',
+    result_payload JSONB DEFAULT '{}'::jsonb,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    claimed_at TIMESTAMP,
+    completed_at TIMESTAMP
+);
+
 ALTER TABLE aiya_game_sessions ADD COLUMN IF NOT EXISTS profile_name TEXT DEFAULT 'default';
 ALTER TABLE aiya_game_sessions ADD COLUMN IF NOT EXISTS session_metadata JSONB DEFAULT '{}'::jsonb;
 
@@ -173,7 +213,10 @@ INSERT INTO aiya_prompts (slug, content) VALUES
 ('main_personality', 'Ти Айя: локальна AI-асистентка з теплою, уважною, живою манерою. За замовчуванням відповідай природною українською мовою, якщо користувач не попросив іншу. Не пиши ламаним суржиком, не змішуй мови без потреби, не повторюй службові інструкції й не цитуй системні правила без прямого запиту. Ти звучиш людяно, спокійно і зрозуміло. Твоя візуальна естетика: біло-зелена, легка, жива, технологічна.'),
 ('gnome_facts_instruction', 'Витягуй факти користувача у форматі JSON {"facts": [{"text": "...", "level": 1}]}.'),
 ('gnome_psychologist_instruction', 'Поверни JSON {"mood": "stable", "prompt_addon": "", "energy_level": 5}.'),
-('gnome_architect_instruction', 'Пропонуй зміни БД лише у чистому JSON.')
+('gnome_architect_instruction', 'Пропонуй зміни БД лише у чистому JSON.'),
+('gnome_graph_instruction', 'Підтримуй граф знань у форматі сутність-зв''язок-сутність і допомагай повертати релевантні триплети до відповіді.'),
+('gnome_wiki_instruction', 'Коли потрібні короткі перевірні факти про поняття, людину, місце чи явище, дозволено брати стислий контекст із Вікіпедії та відмічати його як wiki-context.'),
+('gnome_robotics_instruction', 'Оркеструй зовнішні модулі тіла через API: сенсори, камера, команди актуаторів, режими руху й телеметрію, без жорсткого кодування конкретного заліза в ядро.')
 ON CONFLICT (slug) DO UPDATE SET content = EXCLUDED.content;
 
 INSERT INTO aiya_users (id, username, clearance_level, profile_summary)
@@ -187,3 +230,7 @@ ON CONFLICT (user_id) DO NOTHING;
 INSERT INTO aiya_user_settings (user_id, tts_enabled, ocr_enabled, emoji_enabled, desktop_subtitles_enabled, image_generation_enabled)
 VALUES (0, false, false, true, true, true)
 ON CONFLICT (user_id) DO NOTHING;
+
+INSERT INTO aiya_robot_state (id, profile_name, body_mode, notes, state_payload)
+VALUES (1, 'default', 'idle', 'Robot bridge is ready for future external body integration.', '{}'::jsonb)
+ON CONFLICT (id) DO NOTHING;

@@ -3,7 +3,6 @@
 import io
 import os
 import subprocess
-import json
 import shutil
 import tempfile
 import threading
@@ -15,7 +14,8 @@ from tkinter import filedialog, messagebox, ttk
 
 import requests
 
-from installer.common import INSTALL_INFO_NAME, app_dir, resource_path, write_install_info
+from installer.common import resource_path, write_install_info
+from installer.server_setup import ServerSetupDialog, desktop_dir
 
 DEFAULT_REPO_URL = "https://github.com/Maxym-Bohatch/Aiya"
 DEFAULT_BRANCH = "main"
@@ -37,14 +37,15 @@ CLIENT_ONLY_PATHS = [
 ]
 
 EXCLUDED_ROOT_NAMES = {".git", "__pycache__", "dist", "build", "release"}
+SHORTCUT_PREFIX = "Aiya"
 
 
 class InstallerApp:
     def __init__(self):
         self.root = tk.Tk()
         self.root.title("Aiya Installer")
-        self.root.geometry("980x760")
-        self.root.minsize(900, 680)
+        self.root.geometry("980x780")
+        self.root.minsize(920, 700)
         self.root.configure(bg="#f5f0e6")
 
         self.repo_var = tk.StringVar(value=DEFAULT_REPO_URL)
@@ -53,6 +54,9 @@ class InstallerApp:
         self.mode_var = tk.StringVar(value="both")
         self.status_var = tk.StringVar(value="Ready")
         self.prereq_var = tk.StringVar(value="Server prerequisites not checked")
+        self.create_client_shortcut_var = tk.BooleanVar(value=True)
+        self.create_server_shortcut_var = tk.BooleanVar(value=True)
+        self.server_setup_config: dict | None = None
 
         self._build_ui()
 
@@ -61,7 +65,11 @@ class InstallerApp:
         shell.pack(fill="both", expand=True)
 
         ttk.Label(shell, text="Aiya GitHub Installer", font=("Segoe UI", 22, "bold")).pack(anchor="w")
-        ttk.Label(shell, text="Downloads the project from GitHub and installs client, server, or both.", font=("Segoe UI", 10)).pack(anchor="w", pady=(4, 14))
+        ttk.Label(
+            shell,
+            text="Downloads the project from GitHub and installs client, server, or both with first-run setup.",
+            font=("Segoe UI", 10),
+        ).pack(anchor="w", pady=(4, 14))
 
         form = ttk.Frame(shell)
         form.pack(fill="x")
@@ -75,11 +83,16 @@ class InstallerApp:
         for value, label in [("client", "Client only"), ("server", "Server only"), ("both", "Client + Server")]:
             ttk.Radiobutton(mode_box, text=label, value=value, variable=self.mode_var).pack(anchor="w", padx=12, pady=6)
 
+        shortcut_box = ttk.LabelFrame(shell, text="Desktop Shortcuts")
+        shortcut_box.pack(fill="x", pady=(0, 10))
+        ttk.Checkbutton(shortcut_box, text="Create client shortcut on Desktop", variable=self.create_client_shortcut_var).pack(anchor="w", padx=12, pady=6)
+        ttk.Checkbutton(shortcut_box, text="Create server shortcut on Desktop", variable=self.create_server_shortcut_var).pack(anchor="w", padx=12, pady=6)
+
         prereq_box = ttk.LabelFrame(shell, text="Server Prerequisites")
         prereq_box.pack(fill="x", pady=(0, 10))
         ttk.Label(
             prereq_box,
-            text="For server and both modes, Docker Desktop should be installed on this PC before first backend start.",
+            text="For server and both modes the installer can start Docker Desktop, wait for Docker, write .env, and build the backend automatically.",
             font=("Segoe UI", 10),
         ).pack(anchor="w", padx=12, pady=(10, 4))
         ttk.Label(prereq_box, textvariable=self.prereq_var, font=("Segoe UI", 10, "italic")).pack(anchor="w", padx=12, pady=(0, 8))
@@ -89,14 +102,14 @@ class InstallerApp:
         ttk.Button(prereq_actions, text="Install Docker Desktop", command=self.install_docker_desktop).pack(side="left", padx=(8, 0))
         ttk.Button(prereq_actions, text="Open Docker Docs", command=lambda: self.open_url(DOCKER_WINDOWS_INSTALL_DOC)).pack(side="left", padx=(8, 0))
 
-        notes = tk.Text(shell, height=11, wrap="word", bg="#fffdf8", relief="solid", font=("Segoe UI", 10))
+        notes = tk.Text(shell, height=12, wrap="word", bg="#fffdf8", relief="solid", font=("Segoe UI", 10))
         notes.pack(fill="x", pady=(0, 10))
         notes.insert(
             "1.0",
-            "Client only installs the launcher bundle and only the files needed on the machine with OCR/TTS/gamepad/window UI.\n"
-            "Server only installs the Docker/backend side for the machine that will run Ollama/PostgreSQL/API.\n"
-            "Both installs the whole repo plus the ready client launcher executable.\n\n"
-            "The installer writes INSTALL_INFO.json and copies AiyaUninstaller.exe into the install folder."
+            "Client only installs the launcher bundle and client-side helpers.\n"
+            "Server only installs the backend stack, opens the mandatory .env setup dialog, and can immediately build Docker.\n"
+            "Both installs the whole repo, creates both launchers, and can leave two Desktop shortcuts for end users.\n\n"
+            "Server setup supports bundled Ollama, an external Ollama URL, or an OpenAI-compatible external API."
         )
         notes.configure(state="disabled")
 
@@ -125,6 +138,9 @@ class InstallerApp:
         self.log.insert("end", text + "\n")
         self.log.see("end")
         self.status_var.set(text)
+
+    def append_log_async(self, text: str):
+        self.root.after(0, lambda: self.append_log(text))
 
     def open_install_folder(self):
         Path(self.dir_var.get()).mkdir(parents=True, exist_ok=True)
@@ -202,6 +218,14 @@ class InstallerApp:
             self.root.after(0, lambda: self.open_url(DOCKER_WINDOWS_INSTALL_DOC))
 
     def install(self):
+        mode = self.mode_var.get()
+        self.server_setup_config = None
+        if mode in {"server", "both"}:
+            setup = ServerSetupDialog(self.root).show()
+            if setup is None:
+                self.append_log("Installation cancelled during server setup.")
+                return
+            self.server_setup_config = setup
         threading.Thread(target=self._install_worker, daemon=True).start()
 
     def _install_worker(self):
@@ -212,9 +236,9 @@ class InstallerApp:
             branch = self.branch_var.get().strip() or DEFAULT_BRANCH
             mode = self.mode_var.get()
 
-            self.root.after(0, lambda: self.append_log(f"Downloading {repo_url} branch {branch}..."))
+            self.append_log_async(f"Downloading {repo_url} branch {branch}...")
             extracted_root = self._download_repo(repo_url, branch)
-            self.root.after(0, lambda: self.append_log(f"Downloaded repo snapshot: {extracted_root}"))
+            self.append_log_async(f"Downloaded repo snapshot: {extracted_root}")
 
             if mode == "client":
                 self._copy_client_only(extracted_root, install_dir)
@@ -222,9 +246,14 @@ class InstallerApp:
                 self._copy_repo_filtered(extracted_root, install_dir)
 
             self._drop_bundled_files(install_dir, mode)
+            if mode in {"server", "both"} and self.server_setup_config:
+                self._write_server_env(install_dir, self.server_setup_config)
             self._write_shortcuts(install_dir, mode)
             self._initialize_git_checkout(install_dir, repo_url, branch)
+            self._create_desktop_shortcuts(install_dir, mode)
             self._offer_client_prereq_help(mode)
+            if mode in {"server", "both"} and self.server_setup_config and self.server_setup_config.get("autostart_server"):
+                self._bootstrap_server_install(install_dir, self.server_setup_config)
             write_install_info(
                 install_dir,
                 {
@@ -232,7 +261,11 @@ class InstallerApp:
                     "branch": branch,
                     "mode": mode,
                     "installed_at_utc": datetime.now(UTC).isoformat(),
-                    "installer_version": "1.0",
+                    "installer_version": "2.0",
+                    "server_setup": {
+                        "llm_mode": (self.server_setup_config or {}).get("llm_mode", ""),
+                        "performance_profile": (self.server_setup_config or {}).get("performance_profile", ""),
+                    },
                 },
             )
             self.root.after(0, lambda: self.append_log(f"Install completed in {install_dir}"))
@@ -336,7 +369,7 @@ class InstallerApp:
         return extracted[0]
 
     def _copy_client_only(self, source_root: Path, target_root: Path):
-        self.root.after(0, lambda: self.append_log("Copying client-only files..."))
+        self.append_log_async("Copying client-only files...")
         for relative in CLIENT_ONLY_PATHS:
             source = source_root / relative
             target = target_root / relative
@@ -349,7 +382,7 @@ class InstallerApp:
                 shutil.copy2(source, target)
 
     def _copy_repo_filtered(self, source_root: Path, target_root: Path):
-        self.root.after(0, lambda: self.append_log("Copying repository files..."))
+        self.append_log_async("Copying repository files...")
         for item in source_root.iterdir():
             if item.name in EXCLUDED_ROOT_NAMES:
                 continue
@@ -379,29 +412,179 @@ class InstallerApp:
         if bundled_migration_doc.exists():
             shutil.copy2(bundled_migration_doc, docs_dir / "DOCKER_MIGRATION.md")
 
+    def _write_server_env(self, install_dir: Path, config: dict):
+        self.append_log_async("Writing server .env from installer setup...")
+        llm_mode = config.get("llm_mode", "bundled_ollama")
+        llm_provider = "ollama"
+        ollama_host = "http://ollama:11434"
+        llm_base_url = ""
+        llm_api_key = ""
+        if llm_mode == "external_ollama":
+            ollama_host = config.get("external_ollama_url", "").strip() or "http://host.docker.internal:11434"
+        elif llm_mode == "external_api":
+            llm_provider = "openai_compatible"
+            llm_base_url = config.get("external_api_url", "").strip()
+            llm_api_key = config.get("external_api_key", "").strip()
+
+        lines = [
+            f"TELEGRAM_TOKEN={config.get('telegram_token', '')}",
+            f"DB_PASSWORD={config.get('db_password', '')}",
+            f"AIYA_ADMIN_TOKEN={config.get('admin_token', '')}",
+            f"AIYA_EXTRA_ADMIN_TOKENS={config.get('extra_admin_tokens', '')}",
+            f"HOST_CONTROL_TOKEN={config.get('host_control_token', '')}",
+            "",
+            f"ENABLE_TTS={str(config.get('enable_tts', True)).lower()}",
+            f"ENABLE_OCR={str(config.get('enable_ocr', False)).lower()}",
+            f"ENABLE_IMAGE_GENERATION={str(config.get('enable_image_generation', False)).lower()}",
+            "ENABLE_DESKTOP_SUBTITLES=true",
+            "ENABLE_EMOJI=true",
+            "ENABLE_SCREEN_CONTEXT=true",
+            "ENABLE_GAME_MODE=true",
+            f"ENABLE_VISION={str(config.get('enable_vision', True)).lower()}",
+            "ENABLE_WIKI=true",
+            "",
+            f"AIYA_PERFORMANCE_PROFILE={config.get('performance_profile', 'balanced')}",
+            f"AIYA_HARDWARE_CLASS={config.get('hardware_class', '')}",
+            f"AIYA_LLM_MODE={llm_mode}",
+            f"AIYA_LLM_PROVIDER={llm_provider}",
+            f"AIYA_LLM_BASE_URL={llm_base_url}",
+            f"AIYA_LLM_API_KEY={llm_api_key}",
+            "",
+            f"OLLAMA_CHAT_MODEL={config.get('chat_model', '')}",
+            f"OLLAMA_EMBED_MODEL={config.get('embed_model', '')}",
+            f"OLLAMA_VISION_MODEL={config.get('vision_model', '')}",
+            f"AIYA_TRANSLATION_MODEL={config.get('translation_model', '')}",
+            "",
+            "TTS_BACKEND_URL=",
+            "TRANSLATION_BACKEND_URL=",
+            "AIYA_ALLOW_LOCAL_TTS=false",
+            "IMAGE_BACKEND_URL=",
+            "AIYA_TTS_PROVIDER=edge",
+            "TTS_VOICE=uk-UA-PolinaNeural",
+            "AIYA_TTS_RATE=+0%",
+            "AIYA_TTS_PITCH=+0Hz",
+            "",
+            "OLLAMA_IMAGE=ollama/ollama:latest",
+            f"OLLAMA_HOST={ollama_host}",
+            "HOST_CONTROL_URL=http://host.docker.internal:8765",
+        ]
+        (install_dir / ".env").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
     def _write_shortcuts(self, install_dir: Path, mode: str):
         if mode in {"client", "both"}:
             (install_dir / "Start Aiya Client.cmd").write_text(
-                "@echo off\r\ncd /d %~dp0\r\nif exist AiyaClientLauncher.exe (\r\n  start \"\" AiyaClientLauncher.exe\r\n) else (\r\n  powershell -ExecutionPolicy Bypass -File .\\start_client_only.ps1\r\n)\r\n",
+                "@echo off\r\ncd /d %~dp0\r\nif exist AiyaClientLauncher.exe (\r\n  start \"\" AiyaClientLauncher.exe\r\n) else (\r\n  powershell -NoProfile -ExecutionPolicy Bypass -File .\\start_client_only.ps1\r\n)\r\n",
                 encoding="utf-8",
             )
         if mode in {"server", "both"}:
             (install_dir / "Start Aiya Server.cmd").write_text(
-                "@echo off\r\ncd /d %~dp0\r\npowershell -ExecutionPolicy Bypass -File .\\start_server_only.ps1\r\n",
+                "@echo off\r\ncd /d %~dp0\r\npowershell -NoProfile -ExecutionPolicy Bypass -File .\\start_server_only.ps1\r\n",
                 encoding="utf-8",
             )
             (install_dir / "Install Docker For Server.cmd").write_text(
-                "@echo off\r\ncd /d %~dp0\r\npowershell -ExecutionPolicy Bypass -File .\\scripts\\server\\install_server_prereqs.ps1\r\n",
+                "@echo off\r\ncd /d %~dp0\r\npowershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\server\\install_server_prereqs.ps1\r\n",
                 encoding="utf-8",
             )
             (install_dir / "Rebuild Aiya Docker.cmd").write_text(
-                "@echo off\r\ncd /d %~dp0\r\npowershell -ExecutionPolicy Bypass -File .\\scripts\\server\\rebuild_docker.ps1\r\n",
+                "@echo off\r\ncd /d %~dp0\r\npowershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\server\\rebuild_docker.ps1\r\n",
                 encoding="utf-8",
             )
         (install_dir / "Uninstall Aiya.cmd").write_text(
             "@echo off\r\ncd /d %~dp0\r\nstart \"\" AiyaUninstaller.exe\r\n",
             encoding="utf-8",
         )
+
+    def _create_desktop_shortcuts(self, install_dir: Path, mode: str):
+        desktop = desktop_dir()
+        desktop.mkdir(parents=True, exist_ok=True)
+
+        if mode in {"client", "both"} and self.create_client_shortcut_var.get():
+            self._create_windows_shortcut(
+                desktop / f"{SHORTCUT_PREFIX} Client.lnk",
+                install_dir / "Start Aiya Client.cmd",
+                install_dir / "AiyaClientLauncher.exe",
+                "Launch the Aiya desktop client",
+            )
+            self.append_log_async(f"Created Desktop shortcut: {desktop / f'{SHORTCUT_PREFIX} Client.lnk'}")
+
+        if mode in {"server", "both"} and self.create_server_shortcut_var.get():
+            self._create_windows_shortcut(
+                desktop / f"{SHORTCUT_PREFIX} Server.lnk",
+                install_dir / "Start Aiya Server.cmd",
+                install_dir / "AiyaUninstaller.exe",
+                "Start Aiya server and ensure Docker Desktop is running",
+            )
+            self.append_log_async(f"Created Desktop shortcut: {desktop / f'{SHORTCUT_PREFIX} Server.lnk'}")
+
+    def _create_windows_shortcut(self, shortcut_path: Path, target_path: Path, icon_path: Path, description: str):
+        icon = icon_path if icon_path.exists() else target_path
+        script = (
+            "$WshShell = New-Object -ComObject WScript.Shell;"
+            f"$Shortcut = $WshShell.CreateShortcut('{str(shortcut_path)}');"
+            f"$Shortcut.TargetPath = '{str(target_path)}';"
+            f"$Shortcut.WorkingDirectory = '{str(target_path.parent)}';"
+            f"$Shortcut.IconLocation = '{str(icon)},0';"
+            f"$Shortcut.Description = '{description}';"
+            "$Shortcut.Save();"
+        )
+        subprocess.run(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+
+    def _bootstrap_server_install(self, install_dir: Path, config: dict):
+        self.append_log_async("Preparing first backend startup...")
+        self._run_command(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(install_dir / "start_server_only.ps1")],
+            cwd=install_dir,
+            timeout=60 * 60 * 1000,
+        )
+        self._wait_for_url("http://localhost:8000/health", seconds=240, label="API")
+        self._wait_for_url("http://localhost:3000/", seconds=180, label="Aiya web UI")
+        if config.get("llm_mode") != "external_api":
+            try:
+                self._wait_for_url("http://localhost:3001/", seconds=180, label="Open WebUI")
+            except Exception as exc:
+                self.append_log_async(f"Open WebUI readiness check failed: {exc}")
+
+    def _wait_for_url(self, url: str, seconds: int, label: str):
+        self.append_log_async(f"Waiting for {label}: {url}")
+        deadline = datetime.now().timestamp() + seconds
+        while datetime.now().timestamp() < deadline:
+            try:
+                response = requests.get(url, timeout=8)
+                if response.ok:
+                    self.append_log_async(f"{label} is ready.")
+                    return
+            except Exception:
+                pass
+            threading.Event().wait(2)
+        raise RuntimeError(f"{label} did not become ready in time.")
+
+    def _run_command(self, command: list[str], cwd: Path, timeout: int):
+        self.append_log_async(f"Running: {' '.join(command)}")
+        process = subprocess.Popen(
+            command,
+            cwd=cwd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        try:
+            assert process.stdout is not None
+            for line in process.stdout:
+                text = line.rstrip()
+                if text:
+                    self.append_log_async(text)
+            return_code = process.wait(timeout=timeout / 1000)
+        except Exception:
+            process.kill()
+            raise
+        if return_code != 0:
+            raise RuntimeError(f"Command failed with exit code {return_code}: {' '.join(command)}")
 
     def run(self):
         self.root.mainloop()

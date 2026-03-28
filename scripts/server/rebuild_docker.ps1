@@ -1,17 +1,15 @@
-﻿$ErrorActionPreference = "Stop"
+$ErrorActionPreference = "Stop"
 $ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\\..")).Path
 Set-Location $ProjectRoot
 
-if (-not (Test-Path ".env")) {
-    if (Test-Path ".env.server") {
-        Copy-Item ".env.server" ".env"
-    } elseif (Test-Path ".env.server.example") {
-        Copy-Item ".env.server.example" ".env"
-    } else {
-        Copy-Item ".env.example" ".env"
-    }
-}
+. (Join-Path $ProjectRoot "scripts\server\server_common.ps1")
 
-docker compose down
-docker compose up -d --build
-Write-Host "[Aiya] Docker rebuild finished." -ForegroundColor Green
+Ensure-AiyaEnv -ProjectRoot $ProjectRoot
+Ensure-DockerDesktopRunning
+$composeArgs = Get-AiyaComposeArgs -ProjectRoot $ProjectRoot
+
+& docker @composeArgs down
+& docker @composeArgs up -d --build
+Sync-AiyaDatabasePassword -ProjectRoot $ProjectRoot -ComposeArgs $composeArgs
+
+Write-AiyaStep "Docker rebuild finished."

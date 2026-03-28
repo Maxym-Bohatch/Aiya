@@ -9,16 +9,32 @@ from config import settings
 PROJECT_DIR = Path(__file__).resolve().parent
 
 SERVICE_COMMANDS = {
-    "telegram": ["docker", "compose", "up", "-d", "api", "tg_bot"],
-    "tg_bot": ["docker", "compose", "up", "-d", "api", "tg_bot"],
-    "api": ["docker", "compose", "up", "-d", "api"],
+    "telegram": ["up", "-d", "api", "tg_bot"],
+    "tg_bot": ["up", "-d", "api", "tg_bot"],
+    "api": ["up", "-d", "api"],
+    "web": ["up", "-d", "api", "webui"],
 }
+
+
+def _supported_services() -> list[str]:
+    services = sorted(set(SERVICE_COMMANDS))
+    if (getattr(settings, "llm_provider", "") or "").lower() == "openai_compatible":
+        return [name for name in services if name != "web"]
+    return services
+
+
+def _compose_base() -> list[str]:
+    if settings.llm_mode == "external_ollama":
+        return ["docker", "compose", "-f", "docker-compose.external-ollama.yml"]
+    if settings.llm_mode == "external_api":
+        return ["docker", "compose", "-f", "docker-compose.external-api.yml"]
+    return ["docker", "compose", "-f", "docker-compose.yml"]
 
 
 def capabilities(include_remote: bool = True) -> dict:
     data = {
         "docker_cli": shutil.which("docker") is not None,
-        "supported_services": sorted(set(SERVICE_COMMANDS)),
+        "supported_services": _supported_services(),
         "mode": "best-effort local control",
         "host_control_url": settings.host_control_url,
     }
@@ -29,12 +45,15 @@ def capabilities(include_remote: bool = True) -> dict:
 
 def start_service(service_name: str) -> dict:
     normalized = (service_name or "").strip().lower()
-    command = SERVICE_COMMANDS.get(normalized)
-    if not command:
+    if normalized == "web" and (getattr(settings, "llm_provider", "") or "").lower() == "openai_compatible":
+        return {"ok": False, "message": "WebUI service is unavailable in external API mode."}
+    command_args = SERVICE_COMMANDS.get(normalized)
+    if not command_args:
         return {
             "ok": False,
-            "message": f"Unknown service '{service_name}'. Supported: telegram, tg_bot, api.",
+            "message": f"Unknown service '{service_name}'. Supported: {', '.join(_supported_services())}.",
         }
+    command = [*_compose_base(), *command_args]
 
     remote = remote_start_service(normalized)
     if remote.get("ok"):
@@ -90,11 +109,21 @@ def handle_text_command(text: str) -> str:
         "start api",
         "/system start api",
     ]
+    web_phrases = [
+        "підніми web",
+        "запусти web",
+        "підніми веб",
+        "запусти веб",
+        "start web",
+        "/system start web",
+    ]
 
     if any(phrase in normalized for phrase in telegram_phrases):
         return start_service("telegram")["message"]
     if any(phrase in normalized for phrase in api_phrases):
         return start_service("api")["message"]
+    if any(phrase in normalized for phrase in web_phrases):
+        return start_service("web")["message"]
     return ""
 
 

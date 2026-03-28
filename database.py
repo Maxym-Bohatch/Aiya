@@ -401,6 +401,39 @@ def get_user_profile(user_id, first_name=""):
             conn.close()
 
 
+def refresh_user_profile_summary(user_id, limit=8):
+    conn = None
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT fact_text
+            FROM aiya_facts
+            WHERE user_id = %s
+            ORDER BY use_count DESC, created_at DESC
+            LIMIT %s
+            """,
+            (user_id, limit),
+        )
+        facts = [row[0] for row in cur.fetchall() if row and row[0]]
+        if not facts:
+            return
+        summary = "; ".join(facts[:limit])[:900]
+        cur.execute(
+            "UPDATE aiya_users SET profile_summary = %s WHERE id = %s",
+            (summary, user_id),
+        )
+        conn.commit()
+    except Exception as e:
+        print(f"Profile Summary Error: {e}")
+        if conn:
+            conn.rollback()
+    finally:
+        if conn:
+            conn.close()
+
+
 def get_prompt(slug):
     conn = None
     try:
@@ -450,6 +483,125 @@ def update_graph(user_id, to_add, to_remove):
         print(f"Graph Update Error: {e}")
         if conn:
             conn.rollback()
+    finally:
+        if conn:
+            conn.close()
+
+
+def find_graph_context(user_id, query_text, limit=5):
+    normalized = (query_text or "").strip().lower()
+    if not normalized:
+        return []
+    tokens = [part for part in normalized.replace(",", " ").replace(".", " ").split() if len(part) >= 3][:6]
+    if not tokens:
+        tokens = [normalized[:32]]
+
+    clauses = []
+    params = [user_id]
+    for token in tokens:
+        pattern = f"%{token}%"
+        clauses.append("(LOWER(subject) LIKE %s OR LOWER(relation) LIKE %s OR LOWER(object) LIKE %s)")
+        params.extend([pattern, pattern, pattern])
+    params.append(limit)
+
+    conn = None
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute(
+            f"""
+            SELECT subject, relation, object
+            FROM aiya_graph
+            WHERE user_id = %s
+              AND ({' OR '.join(clauses)})
+            ORDER BY created_at DESC
+            LIMIT %s
+            """,
+            params,
+        )
+        return [f"{subject} -> {relation} -> {obj}" for subject, relation, obj in cur.fetchall()]
+    except Exception as e:
+        print(f"Graph Context Error: {e}")
+        return []
+    finally:
+        if conn:
+            conn.close()
+
+
+def save_wiki_entries(query, language, items):
+    if not items:
+        return
+    conn = None
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        for item in items:
+            cur.execute(
+                """
+                INSERT INTO aiya_wiki_cache (query, language, title, description, extract, url)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    query,
+                    language,
+                    item.get("title", ""),
+                    item.get("description", ""),
+                    item.get("extract", ""),
+                    item.get("url", ""),
+                ),
+            )
+        conn.commit()
+    except Exception as e:
+        print(f"Wiki Cache Save Error: {e}")
+        if conn:
+            conn.rollback()
+    finally:
+        if conn:
+            conn.close()
+
+
+def find_wiki_context(query_text, language="uk", limit=3):
+    normalized = (query_text or "").strip().lower()
+    if not normalized:
+        return []
+    tokens = [part for part in normalized.replace(",", " ").replace(".", " ").split() if len(part) >= 4][:6]
+    if not tokens:
+        tokens = [normalized[:32]]
+
+    clauses = []
+    params = [language]
+    for token in tokens:
+        pattern = f"%{token}%"
+        clauses.append("(LOWER(query) LIKE %s OR LOWER(title) LIKE %s OR LOWER(extract) LIKE %s)")
+        params.extend([pattern, pattern, pattern])
+    params.append(limit)
+
+    conn = None
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute(
+            f"""
+            SELECT title, description, extract, url
+            FROM aiya_wiki_cache
+            WHERE language = %s
+              AND ({' OR '.join(clauses)})
+            ORDER BY created_at DESC
+            LIMIT %s
+            """,
+            params,
+        )
+        rows = cur.fetchall()
+        result = []
+        for title, description, extract, url in rows:
+            line = f"{title}: {(extract or description or '').strip()}"
+            if url:
+                line += f" [{url}]"
+            result.append(line)
+        return result
+    except Exception as e:
+        print(f"Wiki Context Error: {e}")
+        return []
     finally:
         if conn:
             conn.close()
@@ -1013,6 +1165,200 @@ def get_game_session_snapshot(session_id):
                 for item in events
             ],
         }
+    finally:
+        if conn:
+            conn.close()
+
+
+def get_robot_state():
+    conn = None
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT profile_name, body_mode, notes, state_payload, updated_at
+            FROM aiya_robot_state
+            WHERE id = 1
+            """
+        )
+        row = cur.fetchone()
+        if not row:
+            return {"profile_name": "default", "body_mode": "idle", "notes": "", "state_payload": {}, "updated_at": None}
+        return {
+            "profile_name": row[0],
+            "body_mode": row[1],
+            "notes": row[2],
+            "state_payload": row[3] or {},
+            "updated_at": row[4].isoformat() if row[4] else None,
+        }
+    finally:
+        if conn:
+            conn.close()
+
+
+def update_robot_state(profile_name=None, body_mode=None, notes=None, state_payload=None):
+    current = get_robot_state()
+    payload = current.get("state_payload", {})
+    if isinstance(state_payload, dict):
+        payload = {**payload, **state_payload}
+    conn = None
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO aiya_robot_state (id, profile_name, body_mode, notes, state_payload, updated_at)
+            VALUES (1, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+            ON CONFLICT (id) DO UPDATE SET
+                profile_name = EXCLUDED.profile_name,
+                body_mode = EXCLUDED.body_mode,
+                notes = EXCLUDED.notes,
+                state_payload = EXCLUDED.state_payload,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (
+                profile_name or current.get("profile_name", "default"),
+                body_mode or current.get("body_mode", "idle"),
+                notes if notes is not None else current.get("notes", ""),
+                Json(payload),
+            ),
+        )
+        conn.commit()
+        return get_robot_state()
+    finally:
+        if conn:
+            conn.close()
+
+
+def save_robot_sensor_frame(source, sensor_type, payload):
+    conn = None
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO aiya_robot_sensor_frames (source, sensor_type, payload)
+            VALUES (%s, %s, %s)
+            RETURNING id, created_at
+            """,
+            (source, sensor_type, Json(payload or {})),
+        )
+        row = cur.fetchone()
+        conn.commit()
+        return {"id": row[0], "created_at": row[1].isoformat() if row[1] else None}
+    finally:
+        if conn:
+            conn.close()
+
+
+def get_recent_robot_sensor_frames(limit=20):
+    conn = None
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT id, source, sensor_type, payload, created_at
+            FROM aiya_robot_sensor_frames
+            ORDER BY created_at DESC
+            LIMIT %s
+            """,
+            (limit,),
+        )
+        rows = cur.fetchall()
+        return [
+            {
+                "id": row[0],
+                "source": row[1],
+                "sensor_type": row[2],
+                "payload": row[3] or {},
+                "created_at": row[4].isoformat() if row[4] else None,
+            }
+            for row in rows
+        ]
+    finally:
+        if conn:
+            conn.close()
+
+
+def queue_robot_command(target, command_type, payload):
+    conn = None
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO aiya_robot_command_queue (target, command_type, payload)
+            VALUES (%s, %s, %s)
+            RETURNING id, created_at
+            """,
+            (target, command_type, Json(payload or {})),
+        )
+        row = cur.fetchone()
+        conn.commit()
+        return {"command_id": row[0], "created_at": row[1].isoformat() if row[1] else None}
+    finally:
+        if conn:
+            conn.close()
+
+
+def claim_next_robot_command(target):
+    conn = None
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT id, target, command_type, payload, created_at
+            FROM aiya_robot_command_queue
+            WHERE target = %s AND status = 'queued'
+            ORDER BY created_at ASC
+            LIMIT 1
+            """,
+            (target,),
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        cur.execute(
+            """
+            UPDATE aiya_robot_command_queue
+            SET status = 'claimed', claimed_at = CURRENT_TIMESTAMP
+            WHERE id = %s
+            """,
+            (row[0],),
+        )
+        conn.commit()
+        return {
+            "command_id": row[0],
+            "target": row[1],
+            "command_type": row[2],
+            "payload": row[3] or {},
+            "created_at": row[4].isoformat() if row[4] else None,
+        }
+    finally:
+        if conn:
+            conn.close()
+
+
+def complete_robot_command(command_id, status="completed", result_payload=None):
+    conn = None
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            UPDATE aiya_robot_command_queue
+            SET status = %s,
+                result_payload = %s,
+                completed_at = CURRENT_TIMESTAMP
+            WHERE id = %s
+            """,
+            (status, Json(result_payload or {}), command_id),
+        )
+        conn.commit()
+        return {"ok": True, "command_id": command_id, "status": status}
     finally:
         if conn:
             conn.close()

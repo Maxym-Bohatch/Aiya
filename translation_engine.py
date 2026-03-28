@@ -5,9 +5,8 @@ try:
 except Exception:
     GoogleTranslator = None
 
+import ai_provider
 from config import settings
-
-OLLAMA_GENERATE = f"{settings.ollama_host}/api/generate"
 
 
 def _normalize_lang(value: str, fallback: str) -> str:
@@ -50,28 +49,22 @@ def _translate_via_ollama(text: str, source_lang: str, target_lang: str) -> dict
         "- Fix obvious OCR glitches only when the intended meaning is clear.\n\n"
         f"TEXT:\n{text}"
     )
-    payload = {
-        "model": settings.translation_model,
-        "prompt": prompt,
-        "stream": False,
-        "options": {
-            "temperature": 0.05,
-            "top_p": 0.9,
-        },
-    }
-    response = requests.post(
-        OLLAMA_GENERATE,
-        json=payload,
-        timeout=settings.performance.llm_timeout_seconds,
-    )
-    response.raise_for_status()
-    translated = (response.json().get("response") or "").strip()
+    translated = (
+        ai_provider.chat_completion(
+            prompt=prompt,
+            model=settings.translation_model,
+            timeout_seconds=settings.performance.llm_timeout_seconds,
+            temperature=0.05,
+            num_predict=220,
+        )
+        or ""
+    ).strip()
     return {
         "ok": bool(translated),
         "translation": translated,
         "source_lang": source_lang,
         "target_lang": target_lang,
-        "provider": "ollama",
+        "provider": settings.llm_provider,
         "model": settings.translation_model,
     }
 

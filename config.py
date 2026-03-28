@@ -139,6 +139,10 @@ class AppConfig:
         f"postgresql://maxim:{os.getenv('DB_PASSWORD', '')}@localhost:5433/aiya_memory",
     )
     ollama_host: str = os.getenv("OLLAMA_HOST", "http://localhost:11434").rstrip("/")
+    llm_mode: str = (os.getenv("AIYA_LLM_MODE") or "bundled_ollama").strip().lower()
+    llm_provider: str = (os.getenv("AIYA_LLM_PROVIDER") or "ollama").strip().lower()
+    llm_base_url: str = (os.getenv("AIYA_LLM_BASE_URL") or "https://api.openai.com/v1").rstrip("/")
+    llm_api_key: str = (os.getenv("AIYA_LLM_API_KEY") or "").strip()
     api_url: str = os.getenv("API_URL", "http://localhost:8000").rstrip("/")
     remote_web_url: str = (os.getenv("REMOTE_WEB_URL") or "http://localhost:3000").rstrip("/")
     remote_open_webui_url: str = (os.getenv("REMOTE_OPEN_WEBUI_URL") or "http://localhost:3001").rstrip("/")
@@ -200,6 +204,18 @@ class AppConfig:
     @property
     def translation_model(self) -> str:
         return self.translation_model_name or self.ollama_chat_model
+
+    @property
+    def chat_model(self) -> str:
+        return self.ollama_chat_model
+
+    @property
+    def embed_model(self) -> str:
+        return self.ollama_embed_model
+
+    @property
+    def vision_model(self) -> str:
+        return self.ollama_vision_model
 
 
 settings = AppConfig()

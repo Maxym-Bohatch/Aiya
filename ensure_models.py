@@ -41,6 +41,10 @@ def pull_model(name: str):
 
 
 def main():
+    if settings.llm_provider != "ollama":
+        print("Skipping Ollama bootstrap because an external API provider is configured.")
+        return
+
     if not wait_for_ollama():
         raise RuntimeError("Ollama is not reachable")
 

@@ -1,5 +1,6 @@
 ﻿from __future__ import annotations
 
+import os
 import threading
 from pathlib import Path
 import tkinter as tk
@@ -10,6 +11,11 @@ from installer.common import app_dir, read_install_info, remove_path, schedule_s
 ENV_NAMES = {".env", ".env.server", ".env.client", ".env.example", ".env.server.example", ".env.client.example"}
 DATA_DIRS = {"postgres_data", "ollama_storage", "open_webui"}
 KEEP_ALWAYS = {"AiyaUninstaller.exe", "AiyaUninstaller.cleanup.cmd"}
+DESKTOP_SHORTCUTS = {"Aiya Client.lnk", "Aiya Server.lnk"}
+
+
+def desktop_dir() -> Path:
+    return Path(os.environ.get("USERPROFILE", str(Path.home()))) / "Desktop"
 
 
 class UninstallerApp:
@@ -134,6 +140,14 @@ class UninstallerApp:
 
         remaining = [item.name for item in install_dir.iterdir()] if install_dir.exists() else []
         self.root.after(0, lambda: self.append_log(f"Remaining items: {remaining}"))
+
+        desktop = desktop_dir()
+        for shortcut in DESKTOP_SHORTCUTS:
+            try:
+                remove_path(desktop / shortcut)
+                self.root.after(0, lambda shortcut=shortcut: self.append_log(f"Removed Desktop shortcut {shortcut}"))
+            except Exception:
+                pass
 
         exe_path = Path(__file__).resolve()
         try:

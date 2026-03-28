@@ -20,6 +20,10 @@ ALLOWED_CONFIG_KEYS = {
     "HOST_CONTROL_TOKEN",
     "TELEGRAM_TOKEN",
     "DB_PASSWORD",
+    "AIYA_LLM_MODE",
+    "AIYA_LLM_PROVIDER",
+    "AIYA_LLM_BASE_URL",
+    "AIYA_LLM_API_KEY",
     "OLLAMA_HOST",
     "API_URL",
     "HOST_CONTROL_URL",
@@ -41,18 +45,51 @@ ALLOWED_CONFIG_KEYS = {
     "TRANSLATION_BACKEND_URL",
     "TTS_BACKEND_URL",
 }
-SERVICE_COMMANDS = {
-    "telegram": ["docker", "compose", "up", "-d", "api", "tg_bot"],
-    "tg_bot": ["docker", "compose", "up", "-d", "api", "tg_bot"],
-    "api": ["docker", "compose", "up", "-d", "api"],
-    "web": ["docker", "compose", "up", "-d", "api", "webui"],
-}
 FAST_START_CONTAINERS = {
     "telegram": ["aiya_core", "aiya_tg"],
     "tg_bot": ["aiya_tg"],
     "api": ["aiya_core"],
     "web": ["aiya_core", "aiya_open_webui"],
 }
+
+
+def service_command(service_name: str) -> list[str] | None:
+    if service_name == "web" and current_llm_mode() == "external_api":
+        return None
+    mapping = {
+        "telegram": ["up", "-d", "api", "tg_bot"],
+        "tg_bot": ["up", "-d", "api", "tg_bot"],
+        "api": ["up", "-d", "api"],
+        "web": ["up", "-d", "api", "webui"],
+    }
+    args = mapping.get(service_name)
+    if not args:
+        return None
+    return [*compose_command_base(), *args]
+
+
+def supported_services() -> list[str]:
+    services = ["api", "tg_bot", "telegram"]
+    if current_llm_mode() != "external_api":
+        services.append("web")
+    return services
+
+
+def current_llm_mode() -> str:
+    current = read_env_file()
+    mode = (current.get("AIYA_LLM_MODE") or "bundled_ollama").strip().lower()
+    if mode in {"bundled_ollama", "external_ollama", "external_api"}:
+        return mode
+    return "bundled_ollama"
+
+
+def compose_command_base() -> list[str]:
+    mode = current_llm_mode()
+    if mode == "external_ollama":
+        return ["docker", "compose", "-f", "docker-compose.external-ollama.yml"]
+    if mode == "external_api":
+        return ["docker", "compose", "-f", "docker-compose.external-api.yml"]
+    return ["docker", "compose", "-f", "docker-compose.yml"]
 
 
 def read_env_file() -> dict[str, str]:
@@ -90,7 +127,7 @@ def run_command(command: list[str]) -> tuple[bool, str]:
 
 
 def compose_status() -> tuple[bool, str]:
-    return run_command(["docker", "compose", "ps", "-a"])
+    return run_command([*compose_command_base(), "ps", "-a"])
 
 
 def fast_start(service_name: str) -> tuple[bool, str]:
@@ -104,7 +141,7 @@ def restart_impacted_services(changed_keys: set[str]) -> tuple[bool, str]:
     services = ["api"]
     if changed_keys.intersection({"TELEGRAM_TOKEN", "AIYA_ADMIN_TOKEN", "AIYA_EXTRA_ADMIN_TOKENS"}):
         services.append("tg_bot")
-    return run_command(["docker", "compose", "up", "-d", "--force-recreate", *services])
+    return run_command([*compose_command_base(), "up", "-d", "--force-recreate", *services])
 
 
 def rotate_database_password(old_password: str, new_password: str) -> tuple[bool, str]:
@@ -184,7 +221,7 @@ class Handler(BaseHTTPRequestHandler):
                     "nvidia_smi": shutil.which("nvidia-smi") is not None,
                     "winget": shutil.which("winget") is not None,
                     "project_dir": str(PROJECT_DIR),
-                    "supported_services": sorted(SERVICE_COMMANDS),
+                    "supported_services": supported_services(),
                     "compose_status_ok": ok,
                     "compose_status": status,
                     "config_keys": sorted(ALLOWED_CONFIG_KEYS),
@@ -204,7 +241,7 @@ class Handler(BaseHTTPRequestHandler):
         parts = [part for part in self.path.split("/") if part]
         if len(parts) == 3 and parts[0] == "services" and parts[2] == "start":
             service_name = parts[1].lower()
-            command = SERVICE_COMMANDS.get(service_name)
+            command = service_command(service_name)
             if not command:
                 self._json(HTTPStatus.NOT_FOUND, {"ok": False, "message": f"Unknown service '{service_name}'"})
                 return
