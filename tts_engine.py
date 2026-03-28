@@ -24,6 +24,56 @@ except Exception:
     gTTS = None
 
 
+VOICE_PRESETS = {
+    "balanced_uk": {
+        "label": "Balanced Ukrainian",
+        "provider": "edge",
+        "voice": "uk-UA-PolinaNeural",
+        "rate": "+0%",
+        "pitch": "+0Hz",
+    },
+    "soft_uk": {
+        "label": "Soft Ukrainian",
+        "provider": "edge",
+        "voice": "uk-UA-PolinaNeural",
+        "rate": "-12%",
+        "pitch": "-8Hz",
+    },
+    "bright_uk": {
+        "label": "Bright Ukrainian",
+        "provider": "edge",
+        "voice": "uk-UA-PolinaNeural",
+        "rate": "+6%",
+        "pitch": "+10Hz",
+    },
+    "warm_en": {
+        "label": "Warm English",
+        "provider": "edge",
+        "voice": "en-US-JennyNeural",
+        "rate": "-4%",
+        "pitch": "-4Hz",
+    },
+    "clear_en": {
+        "label": "Clear English",
+        "provider": "edge",
+        "voice": "en-US-AriaNeural",
+        "rate": "+2%",
+        "pitch": "+0Hz",
+    },
+}
+
+
+def resolve_tts_settings() -> dict[str, str]:
+    preset = VOICE_PRESETS.get(settings.tts_preset, VOICE_PRESETS["balanced_uk"])
+    return {
+        "preset": settings.tts_preset if settings.tts_preset in VOICE_PRESETS else "balanced_uk",
+        "provider": (settings.tts_provider or preset["provider"]).strip().lower(),
+        "voice": (settings.tts_voice or preset["voice"]).strip(),
+        "rate": (settings.tts_rate or preset["rate"]).strip(),
+        "pitch": (settings.tts_pitch or preset["pitch"]).strip(),
+    }
+
+
 def voice_delivery_enabled() -> bool:
     if settings.tts_backend_url:
         return True
@@ -111,11 +161,12 @@ def _synthesize_via_backend(text: str) -> tuple[str, str, str]:
 
 
 async def _edge_save(text: str, out_path: Path):
+    resolved = resolve_tts_settings()
     communicate = edge_tts.Communicate(
         text,
-        voice=settings.tts_voice or "uk-UA-PolinaNeural",
-        rate=settings.tts_rate or "+0%",
-        pitch=settings.tts_pitch or "+0Hz",
+        voice=resolved["voice"] or "uk-UA-PolinaNeural",
+        rate=resolved["rate"] or "+0%",
+        pitch=resolved["pitch"] or "+0Hz",
     )
     await communicate.save(str(out_path))
 
@@ -129,7 +180,7 @@ def _synthesize_via_edge(text: str) -> tuple[str, str, str]:
 
 
 def _gtts_language() -> str:
-    voice = (settings.tts_voice or "").lower()
+    voice = resolve_tts_settings()["voice"].lower()
     if voice.startswith("uk-") or voice.startswith("uk_") or voice.startswith("uk"):
         return "uk"
     if voice.startswith("pl-") or voice.startswith("pl"):
@@ -154,6 +205,7 @@ def synthesize_to_wav(text: str) -> str:
 
 def synthesize_to_audio_file(text: str) -> tuple[str, str, str]:
     prepared = _sanitize_text(text)
+    resolved = resolve_tts_settings()
 
     if settings.tts_backend_url:
         try:
@@ -161,7 +213,7 @@ def synthesize_to_audio_file(text: str) -> tuple[str, str, str]:
         except Exception as exc:
             print(f"TTS backend error: {exc}")
 
-    if settings.tts_provider == "edge":
+    if resolved["provider"] == "edge":
         try:
             return _synthesize_via_edge(prepared)
         except Exception as exc:
@@ -182,7 +234,7 @@ def synthesize_to_audio_file(text: str) -> tuple[str, str, str]:
     pitch = 54 + fib[(len(prepared) + 2) % len(fib)] * 2
     word_gap = 3 + fib[(len(prepared) + 1) % len(fib)]
     amplitude = 115 + fib[(len(prepared) + 3) % len(fib)] * 2
-    voice = settings.tts_voice or "uk"
+    voice = resolved["voice"] or "uk"
 
     try:
         subprocess.run(
@@ -213,14 +265,19 @@ def synthesize_to_audio_file(text: str) -> tuple[str, str, str]:
 
 
 def tts_capabilities():
+    resolved = resolve_tts_settings()
     return {
         "voice_style": "young-feminine",
-        "voice": settings.tts_voice,
+        "voice": resolved["voice"],
         "desktop_palette": "white-green",
         "enabled": bool(settings.enable_tts or settings.tts_backend_url),
         "delivery_enabled": voice_delivery_enabled(),
         "backend_url": bool(settings.tts_backend_url),
-        "provider": settings.tts_provider,
+        "provider": resolved["provider"],
+        "rate": resolved["rate"],
+        "pitch": resolved["pitch"],
+        "preset": resolved["preset"],
+        "presets": {key: value["label"] for key, value in VOICE_PRESETS.items()},
         "edge_available": edge_tts is not None,
         "gtts_available": gTTS is not None,
     }

@@ -5,6 +5,8 @@ import os
 import shutil
 import sys
 from pathlib import Path
+import tkinter as tk
+from tkinter import ttk
 
 import requests
 
@@ -113,3 +115,34 @@ def enable_mousewheel_scrolling(canvas, root):
 
     canvas.bind("<Enter>", _bind)
     canvas.bind("<Leave>", _unbind)
+
+
+def create_scrollable_frame(
+    parent,
+    root,
+    *,
+    canvas_bg: str,
+    use_ttk_frame: bool = True,
+    frame_style: str | None = None,
+    frame_bg: str | None = None,
+    frame_padding=0,
+):
+    canvas = tk.Canvas(parent, highlightthickness=0, bg=canvas_bg)
+    scrollbar = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
+    if use_ttk_frame:
+        frame = ttk.Frame(canvas, style=frame_style or "", padding=frame_padding)
+    else:
+        frame = tk.Frame(canvas, bg=frame_bg or canvas_bg)
+    window_id = canvas.create_window((0, 0), window=frame, anchor="nw")
+    canvas.configure(yscrollcommand=scrollbar.set)
+
+    def _refresh_scrollregion(_event=None):
+        canvas.configure(scrollregion=canvas.bbox("all"))
+
+    def _sync_width(event):
+        canvas.itemconfigure(window_id, width=event.width)
+
+    frame.bind("<Configure>", _refresh_scrollregion)
+    canvas.bind("<Configure>", _sync_width)
+    enable_mousewheel_scrolling(canvas, root)
+    return canvas, frame, scrollbar

@@ -6,7 +6,7 @@ from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
-from installer.common import app_dir, read_install_info, remove_path, schedule_self_delete
+from installer.common import app_dir, create_scrollable_frame, read_install_info, remove_path, schedule_self_delete
 
 ENV_NAMES = {".env", ".env.server", ".env.client", ".env.example", ".env.server.example", ".env.client.example"}
 DATA_DIRS = {"postgres_data", "ollama_storage", "open_webui"}
@@ -37,8 +37,14 @@ class UninstallerApp:
         self._load_install_info(default_dir)
 
     def _build_ui(self):
-        shell = ttk.Frame(self.root, padding=16)
-        shell.pack(fill="both", expand=True)
+        canvas, shell, scrollbar = create_scrollable_frame(
+            self.root,
+            self.root,
+            canvas_bg="#f5f0e6",
+            frame_padding=16,
+        )
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
 
         ttk.Label(shell, text="Aiya Uninstaller", font=("Segoe UI", 22, "bold")).pack(anchor="w")
         ttk.Label(shell, text="Removes the installed Aiya files. Docker data removal is optional.", font=("Segoe UI", 10)).pack(anchor="w", pady=(4, 14))

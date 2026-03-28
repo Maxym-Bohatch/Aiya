@@ -239,7 +239,12 @@ def generate_image(prompt: str):
     try:
         response = requests.post(settings.image_backend_url, json={"prompt": prompt}, timeout=180)
         response.raise_for_status()
-        return {"enabled": True, "result": response.json()}
+        payload = response.json()
+        if isinstance(payload, dict) and payload.get("image_base64"):
+            return {"enabled": True, "result": {"mode": "remote_base64", **payload}}
+        if isinstance(payload, dict) and payload.get("url"):
+            return {"enabled": True, "result": {"mode": "remote_url", **payload}}
+        return {"enabled": True, "result": payload}
     except Exception as exc:
         return {"enabled": True, "error": str(exc)}
 

@@ -71,6 +71,12 @@ def vision_completion(image_b64: str, instruction: str) -> str:
     return _vision_ollama(image_b64, instruction)
 
 
+def transcribe_audio(audio_bytes: bytes, filename: str = "audio.ogg", content_type: str = "audio/ogg") -> str:
+    if _is_openai_compatible():
+        return _transcribe_openai_compatible(audio_bytes, filename=filename, content_type=content_type)
+    raise RuntimeError("Audio transcription currently requires an OpenAI-compatible API.")
+
+
 def _chat_ollama(
     prompt: str,
     model: str,
@@ -218,3 +224,22 @@ def _vision_openai_compatible(image_b64: str, instruction: str) -> str:
         return ""
     message = choices[0].get("message") or {}
     return _coerce_text(message.get("content"))
+
+
+def _transcribe_openai_compatible(audio_bytes: bytes, filename: str, content_type: str) -> str:
+    response = requests.post(
+        f"{settings.llm_base_url}/audio/transcriptions",
+        data={"model": settings.stt_model_name or "whisper-1"},
+        files={
+            "file": (
+                filename or "audio.ogg",
+                audio_bytes,
+                content_type or "application/octet-stream",
+            )
+        },
+        headers=_auth_headers(),
+        timeout=max(120, settings.performance.llm_timeout_seconds),
+    )
+    response.raise_for_status()
+    payload = response.json()
+    return _coerce_text(payload.get("text", ""))

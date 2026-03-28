@@ -15,7 +15,7 @@ import requests
 from client.env_tools import ensure_defaults, generate_secure_token, parse_env_file, save_env_file
 from client.help_content import HELP_TEXT
 from client.system_checks import CheckResult, find_tesseract_path, format_check_report, list_tesseract_languages, run_client_checks
-from installer.common import bind_entry_clipboard_shortcuts, enable_mousewheel_scrolling
+from installer.common import bind_entry_clipboard_shortcuts, create_scrollable_frame, enable_mousewheel_scrolling
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG_PATH = PROJECT_ROOT / ".env.client"
@@ -45,6 +45,7 @@ DEFAULTS = {
     "AIYA_CHARACTER_SCALE": "1.0",
     "AIYA_SUBTITLE_OVERLAY": "true",
     "AIYA_CHARACTER_OVERLAY": "true",
+    "AIYA_TTS_PRESET": "balanced_uk",
 }
 
 FEATURE_FIELDS = [
@@ -67,6 +68,7 @@ SERVER_SECRET_FIELDS = [
     ("AIYA_LLM_API_KEY", "LLM API Key"),
     ("OLLAMA_HOST", "Ollama Host"),
     ("AIYA_TTS_PROVIDER", "TTS Provider"),
+    ("AIYA_TTS_PRESET", "TTS Preset"),
     ("TTS_VOICE", "TTS Voice"),
     ("AIYA_TTS_RATE", "TTS Rate"),
     ("AIYA_TTS_PITCH", "TTS Pitch"),
@@ -118,8 +120,15 @@ class AiyaClientLauncher:
         return ensure_defaults(current, {**DEFAULTS, **base})
 
     def _build_ui(self):
-        shell = ttk.Frame(self.root, style="Aiya.TFrame", padding=16)
-        shell.pack(fill="both", expand=True)
+        canvas, shell, scrollbar = create_scrollable_frame(
+            self.root,
+            self.root,
+            canvas_bg="#f4efe6",
+            frame_style="Aiya.TFrame",
+            frame_padding=16,
+        )
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
 
         ttk.Label(shell, text="Aiya Desktop Client", style="Aiya.TLabel", font=("Segoe UI", 22, "bold")).pack(anchor="w")
         ttk.Label(

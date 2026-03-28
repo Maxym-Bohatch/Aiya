@@ -43,7 +43,12 @@ class ServerSetupDialog:
         self.chat_model_var = tk.StringVar(value="qwen2.5:3b")
         self.embed_model_var = tk.StringVar(value="nomic-embed-text")
         self.vision_model_var = tk.StringVar(value="llava:7b")
-        self.translation_model_var = tk.StringVar(value="qwen2.5:3b")
+        self.translation_model_var = tk.StringVar(value="auto")
+        self.tts_preset_var = tk.StringVar(value="balanced_uk")
+        self.tts_provider_var = tk.StringVar(value="edge")
+        self.tts_voice_var = tk.StringVar(value="uk-UA-PolinaNeural")
+        self.tts_rate_var = tk.StringVar(value="+0%")
+        self.tts_pitch_var = tk.StringVar(value="+0Hz")
         self.enable_tts_var = tk.BooleanVar(value=True)
         self.enable_ocr_var = tk.BooleanVar(value=False)
         self.enable_vision_var = tk.BooleanVar(value=True)
@@ -130,9 +135,30 @@ class ServerSetupDialog:
         self._entry(models_box, "Translation model", self.translation_model_var, 3)
         ttk.Label(
             models_box,
-            text="If you leave the translation model empty, Aiya will reuse the chat model automatically.",
+            text="Leave translation model empty or keep auto, and Aiya will reuse the chat model automatically.",
             wraplength=620,
         ).grid(row=4, column=0, columnspan=2, sticky="w", padx=(0, 10), pady=(0, 6))
+
+        tts_box = ttk.LabelFrame(content, text="Voice / TTS")
+        tts_box.pack(fill="x", pady=(0, 10))
+        ttk.Label(tts_box, text="Voice preset").grid(row=0, column=0, sticky="w", padx=(0, 10), pady=6)
+        ttk.Combobox(
+            tts_box,
+            textvariable=self.tts_preset_var,
+            values=["balanced_uk", "soft_uk", "bright_uk", "warm_en", "clear_en"],
+            state="readonly",
+            width=24,
+        ).grid(row=0, column=1, sticky="w", pady=6)
+        ttk.Button(tts_box, text="Apply preset", command=self._apply_tts_preset).grid(row=0, column=2, sticky="w", padx=(8, 0), pady=6)
+        self._entry(tts_box, "TTS provider", self.tts_provider_var, 1)
+        self._entry(tts_box, "Voice id", self.tts_voice_var, 2)
+        self._entry(tts_box, "Rate", self.tts_rate_var, 3)
+        self._entry(tts_box, "Pitch", self.tts_pitch_var, 4)
+        ttk.Label(
+            tts_box,
+            text="Presets quickly fill a pleasant voice profile, and the fields below still remain editable.",
+            wraplength=620,
+        ).grid(row=5, column=0, columnspan=3, sticky="w", padx=(0, 10), pady=(0, 6))
 
         finish_box = ttk.LabelFrame(content, text="After Install")
         finish_box.pack(fill="x", pady=(0, 10))
@@ -148,6 +174,7 @@ class ServerSetupDialog:
         ttk.Button(actions, text="Save and Continue", command=self._submit).pack(side="right", padx=(0, 8))
 
         self.top.protocol("WM_DELETE_WINDOW", self._cancel)
+        self._apply_tts_preset()
 
     def _entry(self, parent, label: str, variable: tk.StringVar, row: int, show: str | None = None, allow_paste: bool = False):
         ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", padx=(0, 10), pady=6)
@@ -177,6 +204,20 @@ class ServerSetupDialog:
         if not self.host_control_token_var.get().strip():
             self.host_control_token_var.set(generate_secret())
 
+    def _apply_tts_preset(self):
+        presets = {
+            "balanced_uk": ("edge", "uk-UA-PolinaNeural", "+0%", "+0Hz"),
+            "soft_uk": ("edge", "uk-UA-PolinaNeural", "-12%", "-8Hz"),
+            "bright_uk": ("edge", "uk-UA-PolinaNeural", "+6%", "+10Hz"),
+            "warm_en": ("edge", "en-US-JennyNeural", "-4%", "-4Hz"),
+            "clear_en": ("edge", "en-US-AriaNeural", "+2%", "+0Hz"),
+        }
+        provider, voice, rate, pitch = presets.get(self.tts_preset_var.get(), presets["balanced_uk"])
+        self.tts_provider_var.set(provider)
+        self.tts_voice_var.set(voice)
+        self.tts_rate_var.set(rate)
+        self.tts_pitch_var.set(pitch)
+
     def _sync_llm_mode(self):
         ollama_state = "normal" if self.llm_mode_var.get() == "external_ollama" else "disabled"
         api_state = "normal" if self.llm_mode_var.get() == "external_api" else "disabled"
@@ -199,6 +240,7 @@ class ServerSetupDialog:
         external_url = self.external_ollama_url_var.get().strip()
         external_api_url = self.external_api_url_var.get().strip()
         external_api_key = self.external_api_key_var.get().strip()
+        translation_model = self.translation_model_var.get().strip()
 
         if not telegram_token:
             messagebox.showerror("Server Setup", "Telegram token is required for the current backend package.")
@@ -235,7 +277,12 @@ class ServerSetupDialog:
             "chat_model": self.chat_model_var.get().strip(),
             "embed_model": self.embed_model_var.get().strip(),
             "vision_model": self.vision_model_var.get().strip(),
-            "translation_model": self.translation_model_var.get().strip() or self.chat_model_var.get().strip(),
+            "translation_model": "" if translation_model.lower() == "auto" else translation_model,
+            "tts_preset": self.tts_preset_var.get().strip() or "balanced_uk",
+            "tts_provider": self.tts_provider_var.get().strip() or "edge",
+            "tts_voice": self.tts_voice_var.get().strip() or "uk-UA-PolinaNeural",
+            "tts_rate": self.tts_rate_var.get().strip() or "+0%",
+            "tts_pitch": self.tts_pitch_var.get().strip() or "+0Hz",
             "enable_tts": self.enable_tts_var.get(),
             "enable_ocr": self.enable_ocr_var.get(),
             "enable_vision": self.enable_vision_var.get(),

@@ -1,3 +1,5 @@
+import base64
+import tempfile
 from pathlib import Path
 from typing import Optional
 
@@ -6,6 +8,7 @@ from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel
 
+import ai_provider
 import brain
 import database as db
 import game_agent
@@ -47,6 +50,12 @@ class ImageRequest(BaseModel):
 
 class SpeechRequest(BaseModel):
     text: str
+
+
+class SpeechTranscriptionRequest(BaseModel):
+    audio_base64: str
+    filename: str = "audio.ogg"
+    content_type: str = "audio/ogg"
 
 
 class AliasPatch(BaseModel):
@@ -591,6 +600,19 @@ def image_file(payload: ImageRequest):
     result_data = result.get("result", {})
     if result_data.get("mode") == "local" and result_data.get("path"):
         return FileResponse(result_data["path"], media_type="image/png", filename="aiya_image.png")
+    if result_data.get("mode") == "remote_base64" and result_data.get("image_base64"):
+        out_path = Path(tempfile.gettempdir()) / "aiya_remote_image.png"
+        out_path.write_bytes(base64.b64decode(result_data["image_base64"]))
+        return FileResponse(out_path, media_type="image/png", filename="aiya_image.png")
+    if result_data.get("mode") == "remote_url" and result_data.get("url"):
+        import requests
+
+        response = requests.get(result_data["url"], timeout=120)
+        response.raise_for_status()
+        out_path = Path(tempfile.gettempdir()) / "aiya_remote_image.png"
+        out_path.write_bytes(response.content)
+        media_type = response.headers.get("Content-Type") or "image/png"
+        return FileResponse(out_path, media_type=media_type, filename="aiya_image.png")
     raise HTTPException(status_code=501, detail="Remote image backend does not expose a local file")
 
 
@@ -618,6 +640,30 @@ def synthesize_file(payload: SpeechRequest):
 @app.get("/speech/capabilities")
 def speech_capabilities():
     return tts_capabilities()
+
+
+@app.post("/speech/transcribe")
+def speech_transcribe(payload: SpeechTranscriptionRequest):
+    try:
+        audio_bytes = base64.b64decode(payload.audio_base64)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid audio payload: {exc}") from exc
+    try:
+        text = ai_provider.transcribe_audio(
+            audio_bytes,
+            filename=payload.filename,
+            content_type=payload.content_type,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    if not text:
+        raise HTTPException(status_code=422, detail="Transcription returned empty text")
+    return {
+        "ok": True,
+        "text": text,
+        "provider": settings.llm_provider,
+        "model": settings.stt_model_name,
+    }
 
 
 @app.get("/game/capabilities")

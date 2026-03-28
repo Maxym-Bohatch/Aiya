@@ -22,6 +22,7 @@ import requests
 
 from config import settings
 from game_control import get_backend
+from installer.common import create_scrollable_frame
 
 try:
     from PIL import Image, ImageGrab, ImageSequence, ImageTk
@@ -38,6 +39,32 @@ except Exception:
 
 
 FIB = [1, 2, 3, 5, 8, 13, 21]
+GAMEPAD_PRESETS = {
+    "xbox_balanced": {
+        "profile_name": "xbox-balanced",
+        "input_mode": "gamepad",
+        "play_mode": "assist",
+        "planner_interval_ms": "2200",
+        "action_cooldown_ms": "900",
+        "max_actions_per_step": "2",
+    },
+    "xbox_fast": {
+        "profile_name": "xbox-fast",
+        "input_mode": "gamepad",
+        "play_mode": "auto",
+        "planner_interval_ms": "1200",
+        "action_cooldown_ms": "420",
+        "max_actions_per_step": "3",
+    },
+    "hybrid_safe": {
+        "profile_name": "hybrid-safe",
+        "input_mode": "hybrid",
+        "play_mode": "assist",
+        "planner_interval_ms": "2600",
+        "action_cooldown_ms": "1200",
+        "max_actions_per_step": "1",
+    },
+}
 
 
 @dataclass
@@ -116,6 +143,7 @@ class AiyaDesktop:
         self.ocr_langs_var = tk.StringVar(value=settings.ocr_languages)
         self.translation_status = tk.StringVar(value="Overlay translator: idle")
         self.game_profile_var = tk.StringVar(value=self.game_profile_name)
+        self.gamepad_preset_var = tk.StringVar(value="xbox_balanced")
         self.game_play_mode_var = tk.StringVar(value="assist")
         self.game_input_mode_var = tk.StringVar(value="hybrid")
         self.game_interval_var = tk.StringVar(value="2200")
@@ -164,8 +192,15 @@ class AiyaDesktop:
         style.map("Aiya.TButton", background=[("active", "#1f4735")])
 
     def _build_ui(self):
-        shell = tk.Frame(self.root, bg="#07120e")
-        shell.pack(fill="both", expand=True)
+        canvas, shell, scrollbar = create_scrollable_frame(
+            self.root,
+            self.root,
+            canvas_bg="#07120e",
+            use_ttk_frame=False,
+            frame_bg="#07120e",
+        )
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
 
         self.bg_canvas = tk.Canvas(shell, bg="#07120e", highlightthickness=0)
         self.bg_canvas.place(relx=0, rely=0, relwidth=1, relheight=1)
@@ -311,6 +346,17 @@ class AiyaDesktop:
         tk.Entry(profile_row, textvariable=self.game_profile_var, width=12, bg="#09150f", fg="#edfff4", insertbackground="#90f5b6", relief="flat").pack(side="left", padx=(8, 16))
         tk.Label(profile_row, text="Mode", bg="#111f18", fg="#badcc9", font=("Segoe UI", 10)).pack(side="left")
         ttk.Combobox(profile_row, textvariable=self.game_play_mode_var, width=10, values=("observe", "assist", "auto"), state="readonly").pack(side="left", padx=(8, 0))
+        preset_row = tk.Frame(game_card, bg="#111f18")
+        preset_row.pack(fill="x", padx=16, pady=(0, 8))
+        tk.Label(preset_row, text="Preset", bg="#111f18", fg="#badcc9", font=("Segoe UI", 10)).pack(side="left")
+        ttk.Combobox(
+            preset_row,
+            textvariable=self.gamepad_preset_var,
+            width=16,
+            values=tuple(GAMEPAD_PRESETS.keys()),
+            state="readonly",
+        ).pack(side="left", padx=(8, 12))
+        ttk.Button(preset_row, text="Apply Preset", command=self.apply_gamepad_preset, style="Aiya.TButton").pack(side="left")
         timing_row = tk.Frame(game_card, bg="#111f18")
         timing_row.pack(fill="x", padx=16, pady=(0, 8))
         tk.Label(timing_row, text="Input", bg="#111f18", fg="#badcc9", font=("Segoe UI", 10)).pack(side="left")
@@ -503,6 +549,19 @@ class AiyaDesktop:
         self.game_profile_status.set(
             f"Game profile: {self.game_profile_var.get()} // {self.game_play_mode_var.get()} // {self.game_input_mode_var.get()}"
         )
+
+    def apply_gamepad_preset(self):
+        preset = GAMEPAD_PRESETS.get(self.gamepad_preset_var.get(), GAMEPAD_PRESETS["xbox_balanced"])
+        self.game_profile_var.set(preset["profile_name"])
+        self.game_input_mode_var.set(preset["input_mode"])
+        self.game_play_mode_var.set(preset["play_mode"])
+        self.game_interval_var.set(preset["planner_interval_ms"])
+        self.game_cooldown_var.set(preset["action_cooldown_ms"])
+        self.game_max_actions_var.set(preset["max_actions_per_step"])
+        self.game_profile_status.set(
+            f"Game profile: {self.game_profile_var.get()} // {self.game_play_mode_var.get()} // {self.game_input_mode_var.get()}"
+        )
+        self.append_log("game", f"Applied gamepad preset '{self.gamepad_preset_var.get()}'.")
 
     def save_game_profile(self):
         self.game_name = self.game_name_entry.get().strip() or self.game_name

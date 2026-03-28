@@ -9,6 +9,7 @@ import webbrowser
 from pathlib import Path
 from tkinter import messagebox, ttk
 
+from installer.common import create_scrollable_frame
 from installer.server_env import write_server_env
 from installer.server_setup import ServerSetupDialog
 
@@ -45,8 +46,15 @@ class AiyaServerLauncher:
         style.configure("Aiya.TLabel", background="#f4efe6", font=("Segoe UI", 10))
 
     def _build_ui(self):
-        shell = ttk.Frame(self.root, style="Aiya.TFrame", padding=16)
-        shell.pack(fill="both", expand=True)
+        canvas, shell, scrollbar = create_scrollable_frame(
+            self.root,
+            self.root,
+            canvas_bg="#f4efe6",
+            frame_style="Aiya.TFrame",
+            frame_padding=16,
+        )
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
 
         ttk.Label(shell, text="Aiya Server Launcher", style="Aiya.TLabel", font=("Segoe UI", 22, "bold")).pack(anchor="w")
         ttk.Label(

@@ -11,6 +11,47 @@ import database as db
 WIKIPEDIA_USER_AGENT = "Aiya/1.0 (https://github.com/Maxym-Bohatch/Aiya; contact: installer)"
 
 
+def _wiki_headers() -> dict[str, str]:
+    return {
+        "User-Agent": WIKIPEDIA_USER_AGENT,
+        "Accept": "application/json",
+        "Accept-Language": "uk,en;q=0.8",
+    }
+
+
+def _fallback_search(query: str, language: str, limit: int) -> list[dict[str, Any]]:
+    response = requests.get(
+        f"https://{language}.wikipedia.org/w/api.php",
+        params={
+            "action": "query",
+            "format": "json",
+            "generator": "search",
+            "gsrsearch": query,
+            "gsrlimit": max(1, min(limit, 10)),
+            "prop": "extracts|info",
+            "exintro": 1,
+            "explaintext": 1,
+            "inprop": "url",
+        },
+        headers=_wiki_headers(),
+        timeout=20,
+    )
+    response.raise_for_status()
+    pages = (response.json().get("query") or {}).get("pages") or {}
+    items: list[dict[str, Any]] = []
+    for page in pages.values():
+        items.append(
+            {
+                "title": page.get("title") or query,
+                "description": "",
+                "extract": page.get("extract") or "",
+                "url": page.get("fullurl") or "",
+                "language": language,
+            }
+        )
+    return items[:limit]
+
+
 def wiki_capabilities() -> dict[str, Any]:
     return {
         "enabled": settings.enable_wiki,
@@ -28,10 +69,7 @@ def search_wiki(query: str, language: str = "uk", limit: int = 3) -> dict[str, A
         return {"ok": False, "message": "Query is empty.", "items": []}
 
     search_url = f"https://{lang}.wikipedia.org/w/rest.php/v1/search/title"
-    headers = {
-        "User-Agent": WIKIPEDIA_USER_AGENT,
-        "Accept": "application/json",
-    }
+    headers = _wiki_headers()
     try:
         response = requests.get(
             search_url,
@@ -66,9 +104,21 @@ def search_wiki(query: str, language: str = "uk", limit: int = 3) -> dict[str, A
                     "language": lang,
                 }
             )
+        if not items:
+            items = _fallback_search(normalized_query, lang, limit)
+        if not items and lang != "en":
+            items = _fallback_search(normalized_query, "en", limit)
+            lang = "en"
         db.save_wiki_entries(normalized_query, lang, items)
         return {"ok": True, "items": items, "language": lang, "query": normalized_query}
     except Exception as exc:
+        try:
+            items = _fallback_search(normalized_query, lang, limit)
+            if items:
+                db.save_wiki_entries(normalized_query, lang, items)
+                return {"ok": True, "items": items, "language": lang, "query": normalized_query}
+        except Exception:
+            pass
         return {"ok": False, "message": f"Wiki request failed: {exc}", "items": [], "language": lang}
 
 
