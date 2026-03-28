@@ -4,9 +4,8 @@ import io
 import requests
 from PIL import Image
 
+import ai_provider
 from config import settings
-
-OLLAMA_GENERATE = f"{settings.ollama_host}/api/generate"
 
 
 def _resize_base64_image(image_b64: str, max_side: int = 896) -> str:
@@ -31,18 +30,7 @@ def analyze_image(image_b64: str, instruction: str = "") -> str:
     )
     try:
         prepared = _resize_base64_image(image_b64)
-        response = requests.post(
-            OLLAMA_GENERATE,
-            json={
-                "model": settings.ollama_vision_model,
-                "prompt": prompt,
-                "images": [prepared],
-                "stream": False,
-            },
-            timeout=settings.performance.llm_timeout_seconds,
-        )
-        response.raise_for_status()
-        return response.json().get("response", "").strip()
+        return ai_provider.vision_completion(prepared, prompt)
     except Exception as e:
         print(f"Vision error: {e}")
         return ""

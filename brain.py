@@ -2,13 +2,11 @@ import json
 
 import requests
 
+import ai_provider
 import database as db
 from config import settings
 from image_engine import generate_local_image
 from tts_engine import tts_capabilities, voice_delivery_enabled
-
-OLLAMA_GENERATE = f"{settings.ollama_host}/api/generate"
-OLLAMA_EMBED = f"{settings.ollama_host}/api/embeddings"
 
 FIBONACCI_TTS_PROFILE = {
     "pitch_steps": [1, 2, 3, 5, 8],
@@ -23,15 +21,21 @@ def clean_json_response(res_text: str) -> str:
     return (res_text or "").strip().replace("```json", "").replace("```", "")
 
 
+def build_gnome_council_note() -> str:
+    prompts = {
+        "facts": db.get_prompt("gnome_facts_instruction"),
+        "psychologist": db.get_prompt("gnome_psychologist_instruction"),
+        "architect": db.get_prompt("gnome_architect_instruction"),
+        "graph": db.get_prompt("gnome_graph_instruction"),
+        "wiki": db.get_prompt("gnome_wiki_instruction"),
+        "robotics": db.get_prompt("gnome_robotics_instruction"),
+    }
+    return "\n".join(f"- {name}: {text}" for name, text in prompts.items() if text)
+
+
 def get_embedding(text: str):
     try:
-        response = requests.post(
-            OLLAMA_EMBED,
-            json={"model": settings.ollama_embed_model, "prompt": text},
-            timeout=30,
-        )
-        response.raise_for_status()
-        return response.json()["embedding"]
+        return ai_provider.embedding(text)
     except Exception as exc:
         print(f"Embedding error: {exc}")
         return [0.0] * 768
@@ -45,30 +49,17 @@ def ask_aiya(
     temperature: float | None = None,
     num_predict: int | None = None,
 ) -> str:
-    payload = {
-        "model": model or settings.ollama_chat_model,
-        "prompt": prompt,
-        "stream": False,
-        "options": {
-            "temperature": 0.35 if temperature is None else temperature,
-            "top_p": 0.9,
-            "num_predict": num_predict or 180,
-        },
-    }
-    if format == "json":
-        payload["format"] = "json"
-        payload["options"]["temperature"] = 0.1
-        payload["options"]["num_predict"] = min(num_predict or 120, 120)
     try:
-        response = requests.post(
-            OLLAMA_GENERATE,
-            json=payload,
-            timeout=timeout_seconds or settings.performance.llm_timeout_seconds,
+        return ai_provider.chat_completion(
+            prompt=prompt,
+            model=model or settings.chat_model,
+            format=format,
+            timeout_seconds=timeout_seconds or settings.performance.llm_timeout_seconds,
+            temperature=temperature,
+            num_predict=num_predict,
         )
-        response.raise_for_status()
-        return response.json().get("response", "")
     except Exception as exc:
-        print(f"Ollama error: {exc}")
+        print(f"LLM error: {exc}")
         return "{}" if format == "json" else ""
 
 
@@ -196,11 +187,14 @@ def build_system_prompt(
 - Не розкривай приватні факти інших користувачів без явної згоди.
 - Адмін із валідним токеном може мати розширений доступ, але не вигадуй його без перевірки.
 """
+    gnome_council = build_gnome_council_note()
     screen_block = screen_context if screen_context else "Немає актуальних спостережень з екрана."
     return f"""
 {base_personality}
 {response_rules}
 {privacy_guard}
+РАДА ГНОМІВ ПАМ'ЯТІ:
+{gnome_council}
 ДОДАТКОВА ІНСТРУКЦІЯ: {prompt_addon}
 ПОТОЧНИЙ НАСТРІЙ: {current_mood}
 ПРОФІЛЬ КОРИСТУВАЧА: {user_summary} (Рівень доступу: {user_level})

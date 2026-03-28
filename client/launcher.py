@@ -60,6 +60,11 @@ SERVER_SECRET_FIELDS = [
     ("HOST_CONTROL_TOKEN", "Host Token"),
     ("TELEGRAM_TOKEN", "Telegram Token"),
     ("DB_PASSWORD", "DB Password"),
+    ("AIYA_LLM_MODE", "LLM Mode"),
+    ("AIYA_LLM_PROVIDER", "LLM Provider"),
+    ("AIYA_LLM_BASE_URL", "LLM Base URL"),
+    ("AIYA_LLM_API_KEY", "LLM API Key"),
+    ("OLLAMA_HOST", "Ollama Host"),
     ("AIYA_TTS_PROVIDER", "TTS Provider"),
     ("TTS_VOICE", "TTS Voice"),
     ("AIYA_TTS_RATE", "TTS Rate"),
@@ -255,7 +260,7 @@ class AiyaClientLauncher:
         server_box.grid(row=len(rows) + 2, column=0, columnspan=2, sticky="ew", pady=(12, 0))
         for index, (key, label) in enumerate(SERVER_SECRET_FIELDS):
             ttk.Label(server_box, text=label).grid(row=index, column=0, sticky="w", padx=(10, 8), pady=6)
-            show = "*" if "TOKEN" in key or "PASSWORD" in key else ""
+            show = "*" if "TOKEN" in key or "PASSWORD" in key or "API_KEY" in key else ""
             ttk.Entry(server_box, textvariable=self.server_config_vars[key], width=60, show=show).grid(row=index, column=1, sticky="ew", padx=(0, 10), pady=6)
         server_box.columnconfigure(1, weight=1)
         server_actions = ttk.Frame(server_box, style="Aiya.TFrame")

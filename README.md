@@ -3,7 +3,7 @@
 Aiya is now structured as a Docker-first local assistant backend with:
 
 - long-term memory on PostgreSQL + pgvector
-- Ollama for local LLM inference
+- Ollama for local LLM inference or an OpenAI-compatible external API
 - Telegram as one client channel
 - a built-in Aiya web UI on the local site
 - Open WebUI as an optional second interaction channel
@@ -16,6 +16,7 @@ Aiya is now structured as a Docker-first local assistant backend with:
 ## What works now
 
 - `docker compose up --build` starts the core API, PostgreSQL, Ollama, Telegram bot, the Aiya local web UI, and optional Open WebUI
+- external LLM mode can run against either another Ollama host or an OpenAI-compatible API
 - each user gets isolated memory by default
 - admin token and extra admin tokens can elevate the current user to level 10
 - users can toggle features through API and basic Telegram commands:
@@ -52,6 +53,9 @@ Aiya's memory is split into layers inspired by the SVINOPAS idea:
 - alias memory: maps nicknames like `Макс` and `Максим` to one canonical identity
 - screen memory: OCR observations and short summaries of what is happening on the user's screen
 - game memory: observed scenes, planned actions, and outcomes for future gameplay learning
+- wiki memory: cached factual context from Wikipedia for questions about people, places, concepts, and topics
+
+There is also an internal "gnome council" prompt layer for facts, mood, graph memory, wiki context, and future robotics orchestration.
 
 There is also a recall cooldown on facts so the assistant does not over-repeat the same memory fragment every turn.
 
@@ -147,11 +151,15 @@ Custom companion character:
    - normal machine: `AIYA_PERFORMANCE_PROFILE=balanced`
    - strong machine: `AIYA_PERFORMANCE_PROFILE=high`
    - unsure: leave `auto`
-4. Optional model overrides:
+4. Choose LLM mode:
+   - bundled Ollama: keep `AIYA_LLM_MODE=bundled_ollama` and `AIYA_LLM_PROVIDER=ollama`
+   - external Ollama: set `AIYA_LLM_MODE=external_ollama`, `AIYA_LLM_PROVIDER=ollama`, and point `OLLAMA_HOST` to that server
+   - external API: set `AIYA_LLM_MODE=external_api`, `AIYA_LLM_PROVIDER=openai_compatible`, then fill `AIYA_LLM_BASE_URL` and `AIYA_LLM_API_KEY`
+5. Optional model overrides:
    - `OLLAMA_CHAT_MODEL`
    - `OLLAMA_EMBED_MODEL`
    - `OLLAMA_VISION_MODEL`
-5. Start Docker:
+6. Start Docker:
 
 ```bash
 docker compose up --build
@@ -163,16 +171,16 @@ docker compose up --build
 .\start_aiya.ps1
 ```
 
-6. Wait until:
+7. Wait until:
    - `db` is healthy
-   - `ollama` is up
-   - `ollama_setup` finishes successfully
-   - `api`, `tg_bot`, and `webui` are running
-7. Open interfaces:
+   - in bundled Ollama mode: `ollama` is up and `ollama_setup` finishes successfully
+   - `api` and `tg_bot` are running
+   - `webui` is running only in Ollama-based modes
+8. Open interfaces:
    - API health: `http://localhost:8000/health`
    - Aiya web UI: `http://localhost:3000`
-   - Open WebUI (optional, direct Ollama UI): `http://localhost:3001`
-8. Start desktop body on host:
+   - Open WebUI (optional, direct Ollama UI): `http://localhost:3001` in Ollama-based modes
+9. Start desktop body on host:
 
 ```bash
 python -m client.launcher
@@ -194,7 +202,7 @@ To stop everything cleanly on Windows:
 
 ## Split deployment
 
-- server PC: run Docker, Ollama, PostgreSQL, API, Telegram bot, and optionally Open WebUI
+- server PC: run Docker, PostgreSQL, API, Telegram bot, and either bundled Ollama, external Ollama, or an external API
 - client PC: run only `desktop_companion.py`, browser, OCR/avatar/game-control side
 - client PC: preferably run only the packaged launcher bundle (`AiyaClientLauncher.exe`) and browser
 - you do not need to change `localhost` defaults in code; use a separate `.env.client` on the client machine
@@ -221,6 +229,21 @@ REMOTE_OPEN_WEBUI_URL=http://192.168.0.10:3001
   - server PC: `db`, `ollama`, `api`, `tg_bot`, optional `webui`
   - client PC: `AiyaClientLauncher.exe` and browser
 - if you use OCR, game mode, subtitles, or avatar tied to your screen, the desktop client must run on the PC whose screen you are actually using
+
+## Robot Bridge
+
+- `GET /robot/capabilities`
+- `GET /robot/state`
+- `PATCH /robot/state`
+- `POST /robot/sensors`
+- `GET /robot/sensors/recent`
+- `POST /robot/commands`
+- `GET /robot/commands/next?target=body-controller`
+- `POST /robot/commands/{id}/complete`
+
+This bridge is intended as the stable integration layer for future physical hardware: cameras, IMU sensors, telemetry, manipulators, locomotion controllers, docking logic, and other actuator modules. The goal is that you can connect external controller code to these endpoints without rewriting Aiya core.
+
+See the dedicated integration guide in [docs/ROBOT_BRIDGE.md](docs/ROBOT_BRIDGE.md).
 
 ## Coding help
 
