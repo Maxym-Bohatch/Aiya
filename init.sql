@@ -95,6 +95,15 @@ CREATE TABLE IF NOT EXISTS aiya_aliases (
     UNIQUE (user_id, alias)
 );
 
+CREATE TABLE IF NOT EXISTS aiya_account_link_codes (
+    code TEXT PRIMARY KEY,
+    owner_user_id INTEGER REFERENCES aiya_users(id) ON DELETE CASCADE,
+    label TEXT DEFAULT '',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    expires_at TIMESTAMP NOT NULL,
+    consumed_at TIMESTAMP
+);
+
 ALTER TABLE aiya_facts ADD COLUMN IF NOT EXISTS recall_cooldown_until TIMESTAMP DEFAULT '1970-01-01 00:00:00';
 
 CREATE TABLE IF NOT EXISTS aiya_screen_observations (

@@ -2,6 +2,14 @@ import requests
 
 from config import settings
 
+try:
+    from faster_whisper import WhisperModel
+except Exception:
+    WhisperModel = None
+
+
+_LOCAL_STT_MODEL = None
+
 
 def _coerce_text(value) -> str:
     if value is None:
@@ -69,6 +77,12 @@ def vision_completion(image_b64: str, instruction: str) -> str:
     if _is_openai_compatible():
         return _vision_openai_compatible(image_b64, instruction)
     return _vision_ollama(image_b64, instruction)
+
+
+def transcribe_audio(audio_bytes: bytes, filename: str = "audio.ogg", content_type: str = "audio/ogg") -> str:
+    if _is_openai_compatible():
+        return _transcribe_openai_compatible(audio_bytes, filename=filename, content_type=content_type)
+    return _transcribe_local(audio_bytes, filename=filename)
 
 
 def _chat_ollama(
@@ -218,3 +232,51 @@ def _vision_openai_compatible(image_b64: str, instruction: str) -> str:
         return ""
     message = choices[0].get("message") or {}
     return _coerce_text(message.get("content"))
+
+
+def _transcribe_openai_compatible(audio_bytes: bytes, filename: str, content_type: str) -> str:
+    response = requests.post(
+        f"{settings.llm_base_url}/audio/transcriptions",
+        data={"model": settings.stt_model_name or "whisper-1"},
+        files={
+            "file": (
+                filename or "audio.ogg",
+                audio_bytes,
+                content_type or "application/octet-stream",
+            )
+        },
+        headers=_auth_headers(),
+        timeout=max(120, settings.performance.llm_timeout_seconds),
+    )
+    response.raise_for_status()
+    payload = response.json()
+    return _coerce_text(payload.get("text", ""))
+
+
+def _get_local_stt_model():
+    global _LOCAL_STT_MODEL
+    if WhisperModel is None:
+        raise RuntimeError("faster-whisper is not installed.")
+    if _LOCAL_STT_MODEL is None:
+        model_name = settings.stt_local_model_name or "tiny"
+        _LOCAL_STT_MODEL = WhisperModel(model_name, device="cpu", compute_type="int8")
+    return _LOCAL_STT_MODEL
+
+
+def _transcribe_local(audio_bytes: bytes, filename: str) -> str:
+    model = _get_local_stt_model()
+    suffix = "." + (filename.split(".")[-1] if "." in filename else "wav")
+    import tempfile
+    from pathlib import Path
+
+    temp_path = Path(tempfile.gettempdir()) / f"aiya_stt_{next(tempfile._get_candidate_names())}{suffix}"
+    temp_path.write_bytes(audio_bytes)
+    try:
+        segments, _info = model.transcribe(str(temp_path), beam_size=1, vad_filter=True)
+        parts = [segment.text.strip() for segment in segments if segment.text.strip()]
+        return " ".join(parts).strip()
+    finally:
+        try:
+            temp_path.unlink(missing_ok=True)
+        except Exception:
+            pass

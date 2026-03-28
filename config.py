@@ -178,10 +178,13 @@ class AppConfig:
     enable_vision: bool = _as_bool("ENABLE_VISION", True)
     enable_wiki: bool = _as_bool("ENABLE_WIKI", True)
     tts_provider: str = (os.getenv("AIYA_TTS_PROVIDER") or "edge").strip().lower()
+    tts_preset: str = (os.getenv("AIYA_TTS_PRESET") or "balanced_uk").strip().lower()
     tts_voice: str = (os.getenv("TTS_VOICE") or "uk-UA-PolinaNeural").strip()
     tts_rate: str = (os.getenv("AIYA_TTS_RATE") or "+0%").strip()
     tts_pitch: str = (os.getenv("AIYA_TTS_PITCH") or "+0Hz").strip()
     translation_model_name: str = (os.getenv("AIYA_TRANSLATION_MODEL") or "").strip()
+    stt_model_name: str = (os.getenv("AIYA_STT_MODEL") or "whisper-1").strip()
+    stt_local_model_name: str = (os.getenv("AIYA_STT_LOCAL_MODEL") or "tiny").strip()
     hardware_class: str = detect_hardware_class()
     performance_profile_name: str = select_profile_name()
 

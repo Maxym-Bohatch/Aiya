@@ -13,3 +13,5 @@ vgamepad
 edge-tts
 gTTS
 deep-translator
+sounddevice
+faster-whisper

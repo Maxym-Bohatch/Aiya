@@ -5,10 +5,12 @@ import io
 import json
 import math
 import os
+import queue
 import tempfile
 import threading
 import time
 import tkinter as tk
+import wave
 from dataclasses import dataclass
 from pathlib import Path
 from tkinter import ttk
@@ -22,6 +24,7 @@ import requests
 
 from config import settings
 from game_control import get_backend
+from installer.common import create_scrollable_frame
 
 try:
     from PIL import Image, ImageGrab, ImageSequence, ImageTk
@@ -36,8 +39,39 @@ try:
 except Exception:
     pytesseract = None
 
+try:
+    import sounddevice as sd
+except Exception:
+    sd = None
+
 
 FIB = [1, 2, 3, 5, 8, 13, 21]
+GAMEPAD_PRESETS = {
+    "xbox_balanced": {
+        "profile_name": "xbox-balanced",
+        "input_mode": "gamepad",
+        "play_mode": "assist",
+        "planner_interval_ms": "2200",
+        "action_cooldown_ms": "900",
+        "max_actions_per_step": "2",
+    },
+    "xbox_fast": {
+        "profile_name": "xbox-fast",
+        "input_mode": "gamepad",
+        "play_mode": "auto",
+        "planner_interval_ms": "1200",
+        "action_cooldown_ms": "420",
+        "max_actions_per_step": "3",
+    },
+    "hybrid_safe": {
+        "profile_name": "hybrid-safe",
+        "input_mode": "hybrid",
+        "play_mode": "assist",
+        "planner_interval_ms": "2600",
+        "action_cooldown_ms": "1200",
+        "max_actions_per_step": "1",
+    },
+}
 
 
 @dataclass
@@ -115,7 +149,9 @@ class AiyaDesktop:
         self.translation_target_lang = tk.StringVar(value=settings.client_translation_target_lang)
         self.ocr_langs_var = tk.StringVar(value=settings.ocr_languages)
         self.translation_status = tk.StringVar(value="Overlay translator: idle")
+        self.voice_status = tk.StringVar(value="Voice input: off")
         self.game_profile_var = tk.StringVar(value=self.game_profile_name)
+        self.gamepad_preset_var = tk.StringVar(value="xbox_balanced")
         self.game_play_mode_var = tk.StringVar(value="assist")
         self.game_input_mode_var = tk.StringVar(value="hybrid")
         self.game_interval_var = tk.StringVar(value="2200")
@@ -129,6 +165,11 @@ class AiyaDesktop:
         self.game_learning_status = tk.StringVar(value="Game learning: idle")
         self.character_status = tk.StringVar(value="Character: loading")
         self.subtitle_overlay_status = tk.StringVar(value="Subtitles overlay: pending")
+        self.voice_input_enabled = False
+        self.voice_stream = None
+        self.voice_chunk_queue: queue.Queue[bytes] = queue.Queue()
+        self.voice_thread_started = False
+        self.voice_sample_rate = 16000
 
         self._configure_styles()
         self._build_ui()
@@ -139,6 +180,7 @@ class AiyaDesktop:
         self._start_ocr_thread()
         self._start_game_loop()
         self._start_translation_loop()
+        self._start_voice_loop()
         self._animate_scene()
         self._ensure_subtitle_overlay()
         self._ensure_character_overlay()
@@ -164,8 +206,15 @@ class AiyaDesktop:
         style.map("Aiya.TButton", background=[("active", "#1f4735")])
 
     def _build_ui(self):
-        shell = tk.Frame(self.root, bg="#07120e")
-        shell.pack(fill="both", expand=True)
+        canvas, shell, scrollbar = create_scrollable_frame(
+            self.root,
+            self.root,
+            canvas_bg="#07120e",
+            use_ttk_frame=False,
+            frame_bg="#07120e",
+        )
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
 
         self.bg_canvas = tk.Canvas(shell, bg="#07120e", highlightthickness=0)
         self.bg_canvas.place(relx=0, rely=0, relwidth=1, relheight=1)
@@ -236,6 +285,7 @@ class AiyaDesktop:
             self.game_learning_status,
             self.screen_mode_status,
             self.translation_status,
+            self.voice_status,
             self.character_status,
             self.subtitle_overlay_status,
         ):
@@ -251,6 +301,7 @@ class AiyaDesktop:
             ("Capture Now", self.capture_once),
             ("OCR On/Off", self.toggle_ocr),
             ("TTS On/Off", self.toggle_tts),
+            ("Voice Input", self.toggle_voice_input),
             ("Game On/Off", self.toggle_game_mode),
             ("Game Step Now", self.run_game_step_now),
             ("Screen Always", lambda: self.set_screen_mode("always")),
@@ -311,6 +362,17 @@ class AiyaDesktop:
         tk.Entry(profile_row, textvariable=self.game_profile_var, width=12, bg="#09150f", fg="#edfff4", insertbackground="#90f5b6", relief="flat").pack(side="left", padx=(8, 16))
         tk.Label(profile_row, text="Mode", bg="#111f18", fg="#badcc9", font=("Segoe UI", 10)).pack(side="left")
         ttk.Combobox(profile_row, textvariable=self.game_play_mode_var, width=10, values=("observe", "assist", "auto"), state="readonly").pack(side="left", padx=(8, 0))
+        preset_row = tk.Frame(game_card, bg="#111f18")
+        preset_row.pack(fill="x", padx=16, pady=(0, 8))
+        tk.Label(preset_row, text="Preset", bg="#111f18", fg="#badcc9", font=("Segoe UI", 10)).pack(side="left")
+        ttk.Combobox(
+            preset_row,
+            textvariable=self.gamepad_preset_var,
+            width=16,
+            values=tuple(GAMEPAD_PRESETS.keys()),
+            state="readonly",
+        ).pack(side="left", padx=(8, 12))
+        ttk.Button(preset_row, text="Apply Preset", command=self.apply_gamepad_preset, style="Aiya.TButton").pack(side="left")
         timing_row = tk.Frame(game_card, bg="#111f18")
         timing_row.pack(fill="x", padx=16, pady=(0, 8))
         tk.Label(timing_row, text="Input", bg="#111f18", fg="#badcc9", font=("Segoe UI", 10)).pack(side="left")
@@ -503,6 +565,19 @@ class AiyaDesktop:
         self.game_profile_status.set(
             f"Game profile: {self.game_profile_var.get()} // {self.game_play_mode_var.get()} // {self.game_input_mode_var.get()}"
         )
+
+    def apply_gamepad_preset(self):
+        preset = GAMEPAD_PRESETS.get(self.gamepad_preset_var.get(), GAMEPAD_PRESETS["xbox_balanced"])
+        self.game_profile_var.set(preset["profile_name"])
+        self.game_input_mode_var.set(preset["input_mode"])
+        self.game_play_mode_var.set(preset["play_mode"])
+        self.game_interval_var.set(preset["planner_interval_ms"])
+        self.game_cooldown_var.set(preset["action_cooldown_ms"])
+        self.game_max_actions_var.set(preset["max_actions_per_step"])
+        self.game_profile_status.set(
+            f"Game profile: {self.game_profile_var.get()} // {self.game_play_mode_var.get()} // {self.game_input_mode_var.get()}"
+        )
+        self.append_log("game", f"Applied gamepad preset '{self.gamepad_preset_var.get()}'.")
 
     def save_game_profile(self):
         self.game_name = self.game_name_entry.get().strip() or self.game_name
@@ -759,6 +834,117 @@ class AiyaDesktop:
         except Exception:
             if hasattr(os, "startfile"):
                 os.startfile(path)
+
+    def toggle_voice_input(self):
+        if sd is None:
+            self.append_log("system", "sounddevice is not installed, so live voice input is unavailable.")
+            self.voice_status.set("Voice input: unavailable")
+            return
+        if self.voice_input_enabled:
+            self.voice_input_enabled = False
+            try:
+                if self.voice_stream:
+                    self.voice_stream.stop()
+                    self.voice_stream.close()
+            except Exception:
+                pass
+            self.voice_stream = None
+            self.voice_status.set("Voice input: stopped")
+            self.append_log("system", "Voice input stopped.")
+            return
+
+        def callback(indata, frames, time_info, status):
+            if status:
+                self.root.after(0, lambda: self.append_log("voice", f"stream status: {status}"))
+            self.voice_chunk_queue.put(bytes(indata))
+
+        try:
+            self.voice_stream = sd.RawInputStream(
+                samplerate=self.voice_sample_rate,
+                channels=1,
+                dtype="int16",
+                blocksize=1600,
+                callback=callback,
+            )
+            self.voice_stream.start()
+            self.voice_input_enabled = True
+            self.voice_status.set("Voice input: listening")
+            self.append_log("system", "Voice input started. Partial transcript will appear in the input box.")
+        except Exception as exc:
+            self.voice_stream = None
+            self.voice_input_enabled = False
+            self.voice_status.set("Voice input: error")
+            self.append_log("system", f"Voice input failed to start: {exc}")
+
+    def _start_voice_loop(self):
+        if self.voice_thread_started:
+            return
+        self.voice_thread_started = True
+
+        def loop():
+            pending = bytearray()
+            last_flush = time.time()
+            while True:
+                try:
+                    chunk = self.voice_chunk_queue.get(timeout=0.4)
+                    pending.extend(chunk)
+                except queue.Empty:
+                    chunk = b""
+                now = time.time()
+                if pending and (len(pending) >= self.voice_sample_rate * 2 * 2 or now - last_flush >= 2.5):
+                    pcm_bytes = bytes(pending)
+                    pending.clear()
+                    last_flush = now
+                    transcript = self._transcribe_pcm_chunk(pcm_bytes)
+                    if transcript:
+                        self.root.after(0, lambda text=transcript: self._append_voice_transcript(text))
+                if not self.voice_input_enabled and pending:
+                    pcm_bytes = bytes(pending)
+                    pending.clear()
+                    transcript = self._transcribe_pcm_chunk(pcm_bytes)
+                    if transcript:
+                        self.root.after(0, lambda text=transcript: self._append_voice_transcript(text))
+
+        threading.Thread(target=loop, daemon=True).start()
+
+    def _pcm_to_wav_bytes(self, pcm_bytes: bytes) -> bytes:
+        buffer = io.BytesIO()
+        with wave.open(buffer, "wb") as wav_file:
+            wav_file.setnchannels(1)
+            wav_file.setsampwidth(2)
+            wav_file.setframerate(self.voice_sample_rate)
+            wav_file.writeframes(pcm_bytes)
+        return buffer.getvalue()
+
+    def _transcribe_pcm_chunk(self, pcm_bytes: bytes) -> str:
+        if not pcm_bytes:
+            return ""
+        try:
+            wav_bytes = self._pcm_to_wav_bytes(pcm_bytes)
+            response = requests.post(
+                f"{self.api_url}/speech/transcribe",
+                json={
+                    "audio_base64": base64.b64encode(wav_bytes).decode("ascii"),
+                    "filename": "desktop_stream.wav",
+                    "content_type": "audio/wav",
+                },
+                timeout=180,
+            )
+            response.raise_for_status()
+            payload = response.json()
+            return (payload.get("text") or "").strip()
+        except Exception as exc:
+            self.root.after(0, lambda: self.append_log("voice", f"transcription error: {exc}"))
+            return ""
+
+    def _append_voice_transcript(self, text: str):
+        if not text:
+            return
+        existing = self.entry.get("1.0", "end").strip()
+        combined = f"{existing} {text}".strip() if existing else text
+        self.entry.delete("1.0", "end")
+        self.entry.insert("1.0", combined + " ")
+        self.voice_status.set("Voice input: streaming transcript")
 
     def _start_ocr_thread(self):
         def loop():

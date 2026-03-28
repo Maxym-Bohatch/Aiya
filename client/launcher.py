@@ -15,7 +15,8 @@ import requests
 from client.env_tools import ensure_defaults, generate_secure_token, parse_env_file, save_env_file
 from client.help_content import HELP_TEXT
 from client.system_checks import CheckResult, find_tesseract_path, format_check_report, list_tesseract_languages, run_client_checks
-from installer.common import bind_entry_clipboard_shortcuts, enable_mousewheel_scrolling
+from installer.common import bind_entry_clipboard_shortcuts, create_scrollable_frame, enable_mousewheel_scrolling
+from installer.update_manager import update_installation
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG_PATH = PROJECT_ROOT / ".env.client"
@@ -45,6 +46,7 @@ DEFAULTS = {
     "AIYA_CHARACTER_SCALE": "1.0",
     "AIYA_SUBTITLE_OVERLAY": "true",
     "AIYA_CHARACTER_OVERLAY": "true",
+    "AIYA_TTS_PRESET": "balanced_uk",
 }
 
 FEATURE_FIELDS = [
@@ -67,6 +69,7 @@ SERVER_SECRET_FIELDS = [
     ("AIYA_LLM_API_KEY", "LLM API Key"),
     ("OLLAMA_HOST", "Ollama Host"),
     ("AIYA_TTS_PROVIDER", "TTS Provider"),
+    ("AIYA_TTS_PRESET", "TTS Preset"),
     ("TTS_VOICE", "TTS Voice"),
     ("AIYA_TTS_RATE", "TTS Rate"),
     ("AIYA_TTS_PITCH", "TTS Pitch"),
@@ -95,11 +98,14 @@ class AiyaClientLauncher:
         self.server_config_vars = {key: tk.StringVar() for key, _ in SERVER_SECRET_FIELDS}
         self.wiki_query_var = tk.StringVar()
         self.wiki_lang_var = tk.StringVar(value="uk")
+        self.account_link_code_var = tk.StringVar()
+        self.linked_identity_var = tk.StringVar(value="Linked accounts: not loaded")
 
         self._configure_styles()
         self._build_ui()
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self.root.after(300, self.run_client_diagnostics)
+        self.root.after(500, self.refresh_identity_links)
 
     def _configure_styles(self):
         style = ttk.Style()
@@ -118,8 +124,15 @@ class AiyaClientLauncher:
         return ensure_defaults(current, {**DEFAULTS, **base})
 
     def _build_ui(self):
-        shell = ttk.Frame(self.root, style="Aiya.TFrame", padding=16)
-        shell.pack(fill="both", expand=True)
+        canvas, shell, scrollbar = create_scrollable_frame(
+            self.root,
+            self.root,
+            canvas_bg="#f4efe6",
+            frame_style="Aiya.TFrame",
+            frame_padding=16,
+        )
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
 
         ttk.Label(shell, text="Aiya Desktop Client", style="Aiya.TLabel", font=("Segoe UI", 22, "bold")).pack(anchor="w")
         ttk.Label(
@@ -133,8 +146,10 @@ class AiyaClientLauncher:
         action_buttons = [
             ("Save Config", self.save_config),
             ("Check Client Setup", self.run_client_diagnostics),
+            ("Update Client", self.update_client_installation),
             ("Ping API", self.check_api_health),
             ("Ping Host Bridge", self.check_host_bridge),
+            ("Update Server", self.update_server_installation),
             ("Install Tesseract", self.install_tesseract),
             ("Install OCR Langs", self.install_ocr_languages),
             ("Install Python Deps", self.install_client_requirements),
@@ -286,7 +301,14 @@ class AiyaClientLauncher:
             "Extra admins are stored as a comma-separated token list in AIYA_EXTRA_ADMIN_TOKENS.\n\n"
             "DB password rotation is applied on the running PostgreSQL instance before the .env file is rewritten.",
         )
-        content.rowconfigure(len(rows) + 3, weight=1)
+        link_box = ttk.LabelFrame(content, text="Account Linking")
+        link_box.grid(row=len(rows) + 4, column=0, columnspan=2, sticky="ew", pady=(12, 0))
+        ttk.Label(link_box, textvariable=self.linked_identity_var).grid(row=0, column=0, columnspan=3, sticky="w", padx=10, pady=(10, 6))
+        ttk.Entry(link_box, textvariable=self.account_link_code_var, width=36).grid(row=1, column=0, sticky="ew", padx=(10, 8), pady=(0, 10))
+        ttk.Button(link_box, text="Generate Link Code", command=self.generate_account_link_code, style="Aiya.TButton").grid(row=1, column=1, sticky="w", pady=(0, 10))
+        ttk.Button(link_box, text="Apply Link Code", command=self.apply_account_link_code, style="Aiya.TButton").grid(row=1, column=2, sticky="w", padx=(8, 10), pady=(0, 10))
+        link_box.columnconfigure(0, weight=1)
+        content.rowconfigure(len(rows) + 4, weight=1)
 
     def _build_docker_tab(self):
         ttk.Label(self.docker_tab, text="Use the host bridge to manage Docker services and inspect host capabilities.", style="Aiya.TLabel").pack(anchor="w", pady=(0, 10))
@@ -463,6 +485,26 @@ class AiyaClientLauncher:
                 self.root.after(0, lambda: self._append_log(f"Service start failed for {service_name}: {exc}"))
         self._run_background(action)
 
+    def update_client_installation(self):
+        def action():
+            try:
+                result = update_installation(PROJECT_ROOT)
+                self.root.after(0, lambda: self._append_log(f"Client files updated from {result.get('repo_url')} [{result.get('branch')}]"))
+            except Exception as exc:
+                self.root.after(0, lambda: self._append_log(f"Client update failed: {exc}"))
+        self._run_background(action)
+
+    def update_server_installation(self):
+        def action():
+            try:
+                response = requests.post(self._host_url("/update"), headers=self._host_headers(), timeout=300)
+                response.raise_for_status()
+                payload = response.json()
+                self.root.after(0, lambda: self._append_log(f"Server installation updated: {payload.get('branch')}"))
+            except Exception as exc:
+                self.root.after(0, lambda: self._append_log(f"Server update failed: {exc}"))
+        self._run_background(action)
+
     def install_tesseract(self):
         self._append_log("Starting Tesseract install via winget. Windows may ask for elevation.")
         try:
@@ -559,6 +601,68 @@ class AiyaClientLauncher:
                 self.root.after(0, apply_values)
             except Exception as exc:
                 self.root.after(0, lambda: self._append_log(f"Loading server config failed: {exc}"))
+        self._run_background(action)
+
+    def refresh_identity_links(self):
+        def action():
+            try:
+                response = requests.get(
+                    self._api_url(
+                        f"/users/{self.connection_vars['AIYA_CLIENT_PLATFORM'].get().strip()}/{self.connection_vars['AIYA_CLIENT_EXTERNAL_ID'].get().strip()}/identity"
+                    ),
+                    params={"user_name": self.connection_vars["AIYA_CLIENT_USER_NAME"].get().strip() or "DesktopUser"},
+                    timeout=20,
+                )
+                response.raise_for_status()
+                payload = response.json()
+                links = payload.get("linked_identities", [])
+                text = "Linked accounts: " + (", ".join(f"{item['platform']}:{item['external_id']}" for item in links) or "only current identity")
+                self.root.after(0, lambda: self.linked_identity_var.set(text))
+            except Exception as exc:
+                self.root.after(0, lambda: self.linked_identity_var.set(f"Linked accounts: error ({exc})"))
+        self._run_background(action)
+
+    def generate_account_link_code(self):
+        def action():
+            try:
+                response = requests.post(
+                    self._api_url("/account/link/code"),
+                    json={
+                        "platform": self.connection_vars["AIYA_CLIENT_PLATFORM"].get().strip() or "desktop",
+                        "external_id": int(self.connection_vars["AIYA_CLIENT_EXTERNAL_ID"].get().strip() or "900001"),
+                        "user_name": self.connection_vars["AIYA_CLIENT_USER_NAME"].get().strip() or "DesktopUser",
+                        "label": "desktop-client",
+                    },
+                    timeout=20,
+                )
+                response.raise_for_status()
+                payload = response.json()
+                code = payload.get("code", "")
+                self.root.after(0, lambda: self.account_link_code_var.set(code))
+                self.root.after(0, lambda: self._append_log(f"Generated account link code: {code}"))
+                self.refresh_identity_links()
+            except Exception as exc:
+                self.root.after(0, lambda: self._append_log(f"Generating link code failed: {exc}"))
+        self._run_background(action)
+
+    def apply_account_link_code(self):
+        def action():
+            try:
+                response = requests.post(
+                    self._api_url("/account/link/consume"),
+                    json={
+                        "platform": self.connection_vars["AIYA_CLIENT_PLATFORM"].get().strip() or "desktop",
+                        "external_id": int(self.connection_vars["AIYA_CLIENT_EXTERNAL_ID"].get().strip() or "900001"),
+                        "user_name": self.connection_vars["AIYA_CLIENT_USER_NAME"].get().strip() or "DesktopUser",
+                        "code": self.account_link_code_var.get().strip().upper(),
+                    },
+                    timeout=30,
+                )
+                response.raise_for_status()
+                self.root.after(0, lambda: self._append_log("Applied account link code successfully."))
+                self.refresh_identity_links()
+            except Exception as exc:
+                self.root.after(0, lambda: self._append_log(f"Applying link code failed: {exc}"))
         self._run_background(action)
 
     def apply_server_config(self):

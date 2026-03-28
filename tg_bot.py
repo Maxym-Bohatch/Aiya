@@ -1,4 +1,5 @@
 import asyncio
+import base64
 
 import aiohttp
 from aiogram import Bot, Dispatcher, types
@@ -16,7 +17,9 @@ FEATURES_URL = f"{settings.api_url}/users"
 IMAGE_URL = f"{settings.api_url}/image/generate"
 IMAGE_FILE_URL = f"{settings.api_url}/image/file"
 SPEECH_URL = f"{settings.api_url}/speech/file"
+SPEECH_TRANSCRIBE_URL = f"{settings.api_url}/speech/transcribe"
 SPEECH_CAPABILITIES_URL = f"{settings.api_url}/speech/capabilities"
+ACCOUNT_LINK_URL = f"{settings.api_url}/account/link/consume"
 
 FEATURE_COMMANDS = {
     "tts": "tts_enabled",
@@ -89,6 +92,35 @@ async def send_speech_reply(message: types.Message, session: aiohttp.ClientSessi
     await message.answer_audio(audio, caption="Голос Айї")
 
 
+async def _download_telegram_audio(message: types.Message) -> tuple[bytes, str, str]:
+    source = message.voice or message.audio
+    if source is None:
+        raise RuntimeError("No audio attachment was found.")
+    file = await bot.get_file(source.file_id)
+    handle = await bot.download_file(file.file_path)
+    filename = getattr(source, "file_name", "") or ("voice.ogg" if message.voice else "audio.bin")
+    content_type = "audio/ogg" if filename.lower().endswith(".ogg") else "audio/mpeg"
+    return handle.read(), filename, content_type
+
+
+async def transcribe_audio_message(message: types.Message, session: aiohttp.ClientSession) -> str:
+    audio_bytes, filename, content_type = await _download_telegram_audio(message)
+    async with session.post(
+        SPEECH_TRANSCRIBE_URL,
+        json={
+            "audio_base64": base64.b64encode(audio_bytes).decode("ascii"),
+            "filename": filename,
+            "content_type": content_type,
+        },
+        timeout=240,
+    ) as response:
+        if response.status != 200:
+            detail = await response.text()
+            raise RuntimeError(detail)
+        payload = await response.json()
+        return (payload.get("text") or "").strip()
+
+
 @dp.message(Command("features"))
 async def handle_features(message: types.Message):
     await message.answer(await get_features(message))
@@ -109,6 +141,31 @@ async def handle_speak(message: types.Message, command: CommandObject):
         await send_speech_reply(message, session, text)
 
 
+@dp.message(Command("link"))
+async def handle_link(message: types.Message, command: CommandObject):
+    code = (command.args or "").strip().upper()
+    if not code:
+        await message.answer("Використання: /link CODE")
+        return
+    async with aiohttp.ClientSession() as session:
+        async with session.post(
+            ACCOUNT_LINK_URL,
+            json={
+                "platform": "telegram",
+                "external_id": message.from_user.id,
+                "user_name": message.from_user.first_name or "TelegramUser",
+                "code": code,
+            },
+            timeout=60,
+        ) as response:
+            data = await response.json()
+            if response.status != 200:
+                await message.answer(f"Не вдалося прив'язати акаунт: {data.get('detail', response.status)}")
+                return
+            linked = ", ".join(f"{item['platform']}:{item['external_id']}" for item in data.get("linked_identities", []))
+            await message.answer(f"Акаунти об'єднано. Тепер прив'язки: {linked}")
+
+
 @dp.message(Command("help"))
 async def handle_help(message: types.Message):
     await message.answer(
@@ -121,7 +178,8 @@ async def handle_help(message: types.Message):
         "/ocr on|off\n"
         "/subtitles on|off\n"
         "/image on|off\n"
-        "/image <prompt>"
+        "/image <prompt>\n"
+        "/link <code>"
     )
 
 
@@ -138,7 +196,22 @@ async def handle_feature_toggle(message: types.Message, command: CommandObject):
 
 @dp.message()
 async def handle_tg_message(message: types.Message):
+    if False and (message.voice or message.audio):
+        await message.answer("Голосові та аудіоповідомлення ще не налаштовані на цьому сервері.")
+        return
+
     safe_text = (message.text or "").strip()
+    if message.voice or message.audio:
+        try:
+            async with aiohttp.ClientSession() as session:
+                safe_text = await transcribe_audio_message(message, session)
+            if not safe_text:
+                await message.answer("Не вдалося розпізнати текст із голосового повідомлення.")
+                return
+            await message.answer(f"Розпізнано: {safe_text}")
+        except Exception as exc:
+            await message.answer(f"Голосове повідомлення не оброблено: {exc}")
+            return
     if not safe_text:
         await message.answer("Я поки реагую лише на текстові повідомлення.")
         return
@@ -163,6 +236,9 @@ async def handle_tg_message(message: types.Message):
         return
 
     user_token = safe_text if safe_text == settings.admin_token else ""
+    if user_token:
+        await message.answer("Адмінський токен прийнято. Тепер надішли окремим повідомленням сам запит.")
+        return
     headers = {"X-Aiya-Token": user_token}
     payload = {
         "platform": "telegram",

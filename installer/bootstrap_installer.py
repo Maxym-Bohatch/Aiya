@@ -14,7 +14,7 @@ from tkinter import filedialog, messagebox, ttk
 
 import requests
 
-from installer.common import resource_path, write_install_info
+from installer.common import create_scrollable_frame, resource_path, write_install_info
 from installer.server_env import write_server_env
 from installer.server_setup import ServerSetupDialog, desktop_dir
 
@@ -62,8 +62,14 @@ class InstallerApp:
         self._build_ui()
 
     def _build_ui(self):
-        shell = ttk.Frame(self.root, padding=16)
-        shell.pack(fill="both", expand=True)
+        canvas, shell, scrollbar = create_scrollable_frame(
+            self.root,
+            self.root,
+            canvas_bg="#f5f0e6",
+            frame_padding=16,
+        )
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
 
         ttk.Label(shell, text="Aiya GitHub Installer", font=("Segoe UI", 22, "bold")).pack(anchor="w")
         ttk.Label(
