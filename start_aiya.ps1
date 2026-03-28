@@ -15,7 +15,8 @@ function Start-HostControl([string]$Token) {
 
     $python = Get-Command python -ErrorAction SilentlyContinue
     if (-not $python) {
-        throw "Python is not installed or not in PATH. It is needed for host_control_server.py and desktop_companion.py."
+        Write-Host "[Aiya] Python is not installed or not in PATH. Skipping host control bridge; Docker services can still start." -ForegroundColor Yellow
+        return
     }
 
     Write-AiyaStep "Starting host control server..."

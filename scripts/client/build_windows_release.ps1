@@ -3,12 +3,14 @@ $ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 Set-Location $ProjectRoot
 
 pyinstaller --noconfirm --clean AiyaClientLauncher.spec
+pyinstaller --noconfirm --clean AiyaServerLauncher.spec
 pyinstaller --noconfirm --clean AiyaUninstaller.spec
 pyinstaller --noconfirm --clean AiyaInstaller.spec
 
 $releaseDir = Join-Path $ProjectRoot "release\windows"
 New-Item -ItemType Directory -Force $releaseDir | Out-Null
 Copy-Item "dist\AiyaClientLauncher.exe" (Join-Path $releaseDir "AiyaClientLauncher.exe") -Force
+Copy-Item "dist\AiyaServerLauncher.exe" (Join-Path $releaseDir "AiyaServerLauncher.exe") -Force
 Copy-Item "dist\AiyaInstaller.exe" (Join-Path $releaseDir "AiyaInstaller.exe") -Force
 Copy-Item "dist\AiyaUninstaller.exe" (Join-Path $releaseDir "AiyaUninstaller.exe") -Force
 Copy-Item ".env.client.example" (Join-Path $releaseDir ".env.client.example") -Force

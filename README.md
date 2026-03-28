@@ -11,6 +11,7 @@ Aiya is now structured as a Docker-first local assistant backend with:
 - per-user feature toggles for TTS, OCR, emoji, desktop subtitles, and image generation
 - a separate host desktop companion for avatar, OCR, and floating subtitles
 - a desktop client launcher for config, admin tokens, Docker bridge, wiki, and opening the companion window
+- a dedicated server launcher for first-run `.env` setup, Docker Desktop checks, and one-click backend startup
 - performance profiles for weaker and stronger PCs
 
 ## What works now
@@ -92,6 +93,12 @@ Split mode:
 ```
 
 On first start, the `ollama_setup` service will try to pull the required text, embedding, and vision models.
+
+Desktop server launcher on the host:
+
+```bash
+AiyaServerLauncher.exe
+```
 
 Desktop client launcher on the host:
 
@@ -355,8 +362,10 @@ TTS_VOICE=uk+f3
   - `client`
   - `server`
   - `both`
+- installed server and both modes now include `AiyaServerLauncher.exe` for first-run `.env` setup, Docker install help, and backend start/stop without opening a console
 - for server installs it can:
   - check `docker`, `winget`, `wsl`
   - launch Docker Desktop installation
 - `AiyaUninstaller.exe` is copied into the install folder and can remove app files while optionally preserving env files and Docker data
+- after install, use `AiyaServerLauncher.exe` to fill the required server `.env` on the first run and start Docker
 - after install, use `AiyaClientLauncher.exe` with the host token to rotate Telegram token, DB password, and assign extra admin tokens remotely
