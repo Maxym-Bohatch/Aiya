@@ -9,6 +9,16 @@ OLLAMA_TAGS_URL = f"{settings.ollama_host}/api/tags"
 OLLAMA_PULL_URL = f"{settings.ollama_host}/api/pull"
 
 
+def is_ollama_model_name(name: str) -> bool:
+    value = (name or "").strip().lower()
+    if not value:
+        return False
+    # "deep_translator" and similar identifiers are app-level backends, not Ollama tags.
+    if value in {"auto", "deep_translator", "deep-translator", "google", "google_translate"}:
+        return False
+    return ":" in value or "/" in value
+
+
 def wait_for_ollama(timeout_seconds=300):
     deadline = time.time() + timeout_seconds
     while time.time() < deadline:
@@ -54,6 +64,7 @@ def main():
         settings.ollama_vision_model,
         settings.translation_model,
     }
+    desired = {model for model in desired if is_ollama_model_name(model)}
     existing = installed_models()
     missing = [model for model in desired if model and model not in existing]
 

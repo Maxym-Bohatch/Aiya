@@ -209,13 +209,18 @@ function Sync-AiyaDatabasePassword {
 
     & docker exec aiya_db pg_isready -U maxim -d aiya_memory *> $null
     if ($LASTEXITCODE -ne 0) {
+        $dbExists = (& docker exec aiya_db psql -U maxim -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname = 'aiya_memory'" 2>$null).Trim()
+        if ($dbExists -ne "1") {
+            Write-AiyaStep "Database aiya_memory is still being initialized, skipping password sync on this run."
+            return
+        }
         Write-Host "[Aiya] Database is not ready for password sync yet." -ForegroundColor Yellow
         return
     }
 
     $escapedPassword = $dbPassword.Replace("'", "''")
     $sql = "ALTER USER maxim WITH PASSWORD '$escapedPassword';"
-    & docker exec aiya_db psql -U maxim -d aiya_memory -c $sql *> $null
+    & docker exec aiya_db psql -U maxim -d aiya_memory -c $sql 2>$null | Out-Null
     if ($LASTEXITCODE -eq 0) {
         Write-AiyaStep "Synchronized PostgreSQL password with the current .env configuration."
         Restart-AiyaComposeServices -ComposeArgs $ComposeArgs -Services @("api", "tg_bot")

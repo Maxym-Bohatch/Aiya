@@ -92,6 +92,29 @@ async def send_speech_reply(message: types.Message, session: aiohttp.ClientSessi
     await message.answer_audio(audio, caption="Голос Айї")
 
 
+async def generate_and_send_image(message: types.Message, prompt: str):
+    prompt = (prompt or "").strip()
+    if not prompt:
+        await message.answer("Використання: /image <опис картинки>")
+        return
+
+    async with aiohttp.ClientSession() as session:
+        async with session.post(IMAGE_FILE_URL, json={"prompt": prompt}, timeout=180) as response:
+            if response.status == 200:
+                image_bytes = await response.read()
+                image = BufferedInputFile(image_bytes, filename="aiya_image.png")
+                await message.answer_photo(image, caption=f"Картинка для: {prompt}")
+                return
+
+        async with session.post(IMAGE_URL, json={"prompt": prompt}, timeout=180) as response:
+            if response.status != 200:
+                detail = await response.text()
+                await message.answer(f"Генерація картинки недоступна: {detail}")
+                return
+            data = await response.json()
+            await message.answer(f"Картинку згенеровано. Відповідь бекенда: {data}")
+
+
 async def _download_telegram_audio(message: types.Message) -> tuple[bytes, str, str]:
     source = message.voice or message.audio
     if source is None:
@@ -186,7 +209,11 @@ async def handle_help(message: types.Message):
 @dp.message(Command(*FEATURE_COMMANDS.keys()))
 async def handle_feature_toggle(message: types.Message, command: CommandObject):
     name = command.command.lower()
-    arg = (command.args or "").strip().lower()
+    raw_arg = (command.args or "").strip()
+    arg = raw_arg.lower()
+    if name == "image" and arg and arg not in {"on", "off"}:
+        await generate_and_send_image(message, raw_arg)
+        return
     if arg not in {"on", "off"}:
         await message.answer(f"Використання: /{name} on або /{name} off")
         return
@@ -196,10 +223,6 @@ async def handle_feature_toggle(message: types.Message, command: CommandObject):
 
 @dp.message()
 async def handle_tg_message(message: types.Message):
-    if False and (message.voice or message.audio):
-        await message.answer("Голосові та аудіоповідомлення ще не налаштовані на цьому сервері.")
-        return
-
     safe_text = (message.text or "").strip()
     if message.voice or message.audio:
         try:
@@ -218,21 +241,7 @@ async def handle_tg_message(message: types.Message):
 
     lowered = safe_text.lower()
     if lowered.startswith("/image "):
-        prompt = safe_text[7:].strip()
-        async with aiohttp.ClientSession() as session:
-            async with session.post(IMAGE_FILE_URL, json={"prompt": prompt}, timeout=180) as response:
-                if response.status == 200:
-                    image_bytes = await response.read()
-                    image = BufferedInputFile(image_bytes, filename="aiya_image.png")
-                    await message.answer_photo(image, caption=f"Картинка для: {prompt}")
-                    return
-            async with session.post(IMAGE_URL, json={"prompt": prompt}, timeout=180) as response:
-                if response.status != 200:
-                    detail = await response.text()
-                    await message.answer(f"Генерація картинки недоступна: {detail}")
-                    return
-                data = await response.json()
-                await message.answer(f"Картинку згенеровано. Відповідь бекенда: {data}")
+        await generate_and_send_image(message, safe_text[7:].strip())
         return
 
     user_token = safe_text if safe_text == settings.admin_token else ""
