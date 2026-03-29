@@ -1,11 +1,42 @@
-﻿$ErrorActionPreference = "Stop"
+$ErrorActionPreference = "Stop"
 $ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 Set-Location $ProjectRoot
 
-pyinstaller --noconfirm --clean AiyaClientLauncher.spec
-pyinstaller --noconfirm --clean AiyaServerLauncher.spec
-pyinstaller --noconfirm --clean AiyaUninstaller.spec
-pyinstaller --noconfirm --clean AiyaInstaller.spec
+function Stop-LockingAiyaProcesses {
+    $distDir = Join-Path $ProjectRoot "dist"
+    $targets = @(
+        (Join-Path $distDir "AiyaClientLauncher.exe"),
+        (Join-Path $distDir "AiyaServerLauncher.exe"),
+        (Join-Path $distDir "AiyaUninstaller.exe"),
+        (Join-Path $distDir "AiyaInstaller.exe")
+    ) | ForEach-Object { [System.IO.Path]::GetFullPath($_) }
+
+    Get-Process | Where-Object {
+        $_.Path -and ([System.IO.Path]::GetFullPath($_.Path) -in $targets)
+    } | ForEach-Object {
+        Write-Host "[Aiya] Stopping running build target: $($_.Path)" -ForegroundColor Yellow
+        Stop-Process -Id $_.Id -Force
+    }
+}
+
+function Invoke-PyInstallerBuild {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$SpecFile
+    )
+
+    & pyinstaller --noconfirm --clean $SpecFile
+    if ($LASTEXITCODE -ne 0) {
+        throw "PyInstaller failed for $SpecFile with exit code $LASTEXITCODE"
+    }
+}
+
+Stop-LockingAiyaProcesses
+
+Invoke-PyInstallerBuild "AiyaClientLauncher.spec"
+Invoke-PyInstallerBuild "AiyaServerLauncher.spec"
+Invoke-PyInstallerBuild "AiyaUninstaller.spec"
+Invoke-PyInstallerBuild "AiyaInstaller.spec"
 
 $releaseDir = Join-Path $ProjectRoot "release\windows"
 New-Item -ItemType Directory -Force $releaseDir | Out-Null

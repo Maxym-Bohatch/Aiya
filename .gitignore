@@ -7,3 +7,11 @@ open_webui/
 *.png
 build/
 dist/
+INSTALL_INFO.json
+*.cleanup.cmd
+/.git_backup_broken_*/
+/Install Docker For Server.cmd
+/Rebuild Aiya Docker.cmd
+/Start Aiya Client.cmd
+/Start Aiya Server.cmd
+/Uninstall Aiya.cmd
