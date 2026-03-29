@@ -6,35 +6,38 @@
   <title>Aiya Local</title>
   <style>
     :root {
-      --bg: #edf8ef;
-      --panel: rgba(255, 255, 255, 0.84);
-      --line: #b6d8bc;
-      --text: #14311d;
-      --muted: #4e6a56;
+      --bg: #eef7f0;
+      --panel: rgba(255, 255, 255, 0.88);
+      --line: #b9d5bf;
+      --text: #15311d;
+      --muted: #57705f;
       --accent: #2f9f57;
-      --accent-2: #86d98f;
-      --danger: #b04949;
-      --shadow: 0 24px 70px rgba(33, 76, 44, 0.14);
+      --accent-dark: #247a43;
+      --accent-soft: rgba(47, 159, 87, 0.12);
+      --danger: #b04848;
+      --shadow: 0 24px 64px rgba(30, 72, 40, 0.14);
     }
 
     * { box-sizing: border-box; }
+
     body {
       margin: 0;
       min-height: 100vh;
       font-family: "Segoe UI", sans-serif;
       color: var(--text);
       background:
-        radial-gradient(circle at top left, rgba(132, 229, 165, 0.35), transparent 28%),
-        radial-gradient(circle at right center, rgba(53, 151, 101, 0.18), transparent 24%),
-        linear-gradient(160deg, #f7fff8 0%, #edf8ef 46%, #dbeee0 100%);
+        radial-gradient(circle at top left, rgba(124, 211, 153, 0.28), transparent 28%),
+        radial-gradient(circle at right center, rgba(47, 159, 87, 0.14), transparent 26%),
+        linear-gradient(160deg, #f8fffa 0%, #edf7ef 44%, #dceee1 100%);
     }
 
     .shell {
-      width: min(1120px, calc(100% - 32px));
-      margin: 24px auto;
+      width: min(1240px, calc(100% - 28px));
+      margin: 18px auto;
       display: grid;
-      grid-template-columns: 320px 1fr;
+      grid-template-columns: 360px 1fr;
       gap: 18px;
+      align-items: start;
     }
 
     .card {
@@ -45,193 +48,376 @@
       backdrop-filter: blur(10px);
     }
 
-    .side { padding: 22px; }
-    .main { padding: 18px; }
-    h1, h2, p { margin: 0; }
-    h1 { font-size: 32px; }
-    h2 { font-size: 15px; margin-bottom: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
-    .lead { margin-top: 10px; color: var(--muted); line-height: 1.5; }
+    .side {
+      padding: 20px;
+      display: grid;
+      gap: 14px;
+      position: sticky;
+      top: 18px;
+    }
+
+    .main {
+      padding: 18px;
+      display: grid;
+      gap: 14px;
+    }
+
+    h1, h2, h3, p {
+      margin: 0;
+    }
+
+    h1 {
+      font-size: 30px;
+      line-height: 1.1;
+    }
+
+    h2 {
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+      margin-bottom: 10px;
+    }
+
+    .lead {
+      color: var(--muted);
+      line-height: 1.5;
+      margin-top: 8px;
+    }
+
     .badge {
       display: inline-flex;
       align-items: center;
       gap: 8px;
       padding: 8px 12px;
       border-radius: 999px;
+      background: var(--accent-soft);
       border: 1px solid var(--line);
-      background: rgba(134, 217, 143, 0.18);
-      font-size: 13px;
+      width: fit-content;
       margin-top: 14px;
+      font-size: 13px;
     }
+
     .dot {
       width: 10px;
       height: 10px;
       border-radius: 50%;
       background: var(--accent);
-      box-shadow: 0 0 16px rgba(47, 159, 87, 0.5);
+      box-shadow: 0 0 18px rgba(47, 159, 87, 0.45);
     }
-    .stack { display: grid; gap: 14px; margin-top: 22px; }
+
     .subcard {
       border: 1px solid var(--line);
       border-radius: 18px;
+      background: rgba(255, 255, 255, 0.7);
       padding: 14px;
-      background: rgba(255,255,255,0.62);
     }
-    .status {
+
+    .status-list,
+    .stack {
       display: grid;
       gap: 8px;
+    }
+
+    .status-list {
       font-size: 14px;
       color: var(--muted);
+      line-height: 1.45;
     }
-    .status strong { color: var(--text); }
-    .controls {
-      display: grid;
+
+    .status-list strong {
+      color: var(--text);
+    }
+
+    .controls,
+    .row {
+      display: flex;
+      flex-wrap: wrap;
       gap: 10px;
-      margin-top: 12px;
     }
-    button, input, textarea {
+
+    button,
+    input,
+    textarea,
+    select {
       font: inherit;
-      border-radius: 16px;
+      border-radius: 14px;
       border: 1px solid var(--line);
     }
-    button {
-      padding: 12px 14px;
-      background: linear-gradient(135deg, var(--accent) 0%, #237444 100%);
-      color: white;
+
+    button,
+    .button-like {
       cursor: pointer;
       transition: transform 120ms ease, opacity 120ms ease;
     }
+
+    button {
+      padding: 11px 14px;
+      background: linear-gradient(135deg, var(--accent) 0%, var(--accent-dark) 100%);
+      color: white;
+    }
+
     button.secondary {
       background: white;
       color: var(--text);
     }
-    button:disabled { opacity: 0.6; cursor: wait; }
-    button:hover { transform: translateY(-1px); }
+
+    button:disabled {
+      opacity: 0.65;
+      cursor: wait;
+      transform: none;
+    }
+
+    button:hover {
+      transform: translateY(-1px);
+    }
+
+    input,
+    textarea {
+      width: 100%;
+      background: rgba(255, 255, 255, 0.9);
+      color: var(--text);
+      padding: 12px 14px;
+    }
+
+    textarea {
+      min-height: 110px;
+      resize: vertical;
+    }
+
+    .field-grid {
+      display: grid;
+      gap: 10px;
+    }
+
+    .identity-grid {
+      display: grid;
+      gap: 10px;
+      grid-template-columns: repeat(2, 1fr);
+    }
+
+    .identity-grid .full {
+      grid-column: 1 / -1;
+    }
+
+    .feature-list {
+      display: grid;
+      gap: 10px;
+      font-size: 14px;
+    }
+
+    .feature-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 10px 12px;
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.78);
+      border: 1px solid rgba(185, 213, 191, 0.9);
+    }
+
+    .feature-row label {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex: 1;
+      cursor: pointer;
+    }
+
+    .feature-row input[type="checkbox"] {
+      width: 18px;
+      height: 18px;
+      margin: 0;
+      accent-color: var(--accent);
+    }
+
     .main-head {
       display: flex;
       justify-content: space-between;
-      align-items: center;
-      gap: 16px;
-      padding: 8px 8px 16px;
+      align-items: flex-start;
+      gap: 14px;
+      padding: 8px 8px 0;
     }
+
     .main-head p {
-      color: var(--muted);
-      max-width: 620px;
+      max-width: 760px;
       line-height: 1.5;
+      color: var(--muted);
+      margin-top: 8px;
     }
+
     .chat {
+      min-height: 460px;
+      max-height: 60vh;
+      overflow: auto;
       display: grid;
       gap: 14px;
-      min-height: 460px;
-      max-height: 62vh;
-      overflow: auto;
-      padding: 10px;
+      padding: 12px;
       border-radius: 22px;
-      background: linear-gradient(180deg, rgba(255,255,255,0.68), rgba(231,246,235,0.82));
       border: 1px solid var(--line);
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.76), rgba(229, 245, 233, 0.86));
     }
+
     .message {
-      max-width: 85%;
+      max-width: 88%;
       padding: 14px 16px;
       border-radius: 18px;
       white-space: pre-wrap;
-      line-height: 1.45;
+      line-height: 1.5;
+      display: grid;
+      gap: 10px;
     }
+
     .message.user {
       justify-self: end;
-      background: #dff6e4;
+      background: #dcf4e1;
       border-bottom-right-radius: 6px;
     }
+
     .message.aiya {
       background: white;
       border-bottom-left-radius: 6px;
     }
+
+    .message img {
+      max-width: min(100%, 420px);
+      border-radius: 16px;
+      border: 1px solid var(--line);
+      display: block;
+    }
+
+    .message audio {
+      width: min(100%, 340px);
+    }
+
+    .message-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .message-actions button {
+      padding: 8px 12px;
+      font-size: 13px;
+    }
+
     .composer {
       display: grid;
       gap: 12px;
-      margin-top: 14px;
     }
-    textarea {
-      width: 100%;
-      min-height: 110px;
-      resize: vertical;
-      padding: 14px 16px;
-      background: rgba(255,255,255,0.88);
-    }
-    .meta {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 10px;
-    }
-    input {
-      width: 100%;
-      padding: 12px 14px;
-      background: rgba(255,255,255,0.88);
-    }
-    .row {
+
+    .shortcut-row {
       display: flex;
-      gap: 10px;
       flex-wrap: wrap;
-    }
-    .pill {
-      display: inline-block;
-      padding: 8px 10px;
-      border-radius: 999px;
-      background: rgba(134, 217, 143, 0.14);
-      border: 1px solid var(--line);
+      gap: 8px;
+      color: var(--muted);
       font-size: 13px;
     }
-    .error { color: var(--danger); }
-    @media (max-width: 900px) {
-      .shell { grid-template-columns: 1fr; }
-      .meta { grid-template-columns: 1fr; }
-      .message { max-width: 100%; }
+
+    .pill {
+      padding: 7px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: var(--accent-soft);
+    }
+
+    .small {
+      font-size: 13px;
+      color: var(--muted);
+      line-height: 1.45;
+    }
+
+    .error {
+      color: var(--danger);
+      min-height: 1.2em;
+    }
+
+    .links {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      font-size: 13px;
+    }
+
+    .links a {
+      color: var(--accent-dark);
+    }
+
+    @media (max-width: 980px) {
+      .shell {
+        grid-template-columns: 1fr;
+      }
+
+      .side {
+        position: static;
+      }
+    }
+
+    @media (max-width: 720px) {
+      .identity-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .message {
+        max-width: 100%;
+      }
     }
   </style>
 </head>
 <body>
   <div class="shell">
     <aside class="card side">
-      <h1>Aiya</h1>
-      <p class="lead">Локальний інтерфейс, який говорить саме з Aiya API, а не напряму з Ollama.</p>
-      <div class="badge"><span class="dot"></span><span id="health-label">Перевіряю стан...</span></div>
+      <div>
+        <h1>Aiya</h1>
+        <p class="lead">Локальний веб-клієнт для того ж ядра, що й Telegram. Тут працюють ті самі slash-команди, токен, TTS, картинки та лінкування акаунтів.</p>
+        <div class="badge"><span class="dot"></span><span id="health-label">Перевіряю стан...</span></div>
+      </div>
 
-      <div class="stack">
-        <div class="subcard">
-          <h2>Пам'ять</h2>
-          <div class="status">
-            <div><strong>Гноми пам'яті:</strong> факти, настрій, граф, screen/game модулі</div>
-            <div><strong>Граф:</strong> зберігається в PostgreSQL через `aiya_graph`</div>
-            <div><strong>Game mode:</strong> <span id="game-cap">перевіряю...</span></div>
-          </div>
+      <div class="subcard">
+        <h2>Ідентичність</h2>
+        <div class="field-grid identity-grid">
+          <input id="platform" value="web" placeholder="platform">
+          <input id="external-id" placeholder="external id">
+          <input id="user-name" class="full" value="WebUser" placeholder="Ім'я користувача">
+          <input id="token" class="full" type="password" placeholder="Admin token або extra token">
         </div>
+        <p class="small" style="margin-top:10px;">Токен відправляється в `X-Aiya-Token`, тому права тут працюють так само, як у бекенді.</p>
+      </div>
 
-        <div class="subcard">
-          <h2>Сервіси</h2>
-          <div class="status" id="service-capabilities">Завантаження...</div>
-          <div class="controls">
-            <button id="start-telegram">Підняти Telegram</button>
-            <button id="refresh" class="secondary">Оновити статус</button>
-          </div>
+      <div class="subcard">
+        <h2>Фічі Користувача</h2>
+        <div id="feature-list" class="feature-list">
+          <div class="feature-row"><label><input type="checkbox" data-feature="tts_enabled">TTS</label><span>звук відповіді</span></div>
+          <div class="feature-row"><label><input type="checkbox" data-feature="image_generation_enabled">Картинки</label><span>генерація image</span></div>
+          <div class="feature-row"><label><input type="checkbox" data-feature="emoji_enabled">Emoji</label><span>стиль відповіді</span></div>
+          <div class="feature-row"><label><input type="checkbox" data-feature="ocr_enabled">OCR</label><span>для desktop mode</span></div>
+          <div class="feature-row"><label><input type="checkbox" data-feature="desktop_subtitles_enabled">Subtitles</label><span>для desktop mode</span></div>
         </div>
+        <div class="controls" style="margin-top:12px;">
+          <button id="refresh-features" class="secondary">Оновити фічі</button>
+        </div>
+      </div>
 
-        <div class="subcard">
-          <h2>Швидкі дії</h2>
-          <div class="row">
-            <span class="pill">"підніми телеграм"</span>
-            <span class="pill">"підніми api"</span>
-            <span class="pill">"що ти пам'ятаєш?"</span>
-          </div>
+      <div class="subcard">
+        <h2>Сервіси</h2>
+        <div id="service-capabilities" class="status-list">Завантаження...</div>
+        <div class="controls" style="margin-top:12px;">
+          <button data-service="telegram">Підняти Telegram</button>
+          <button data-service="api" class="secondary">Перезапустити API</button>
+          <button data-service="web" class="secondary">Підняти WebUI</button>
         </div>
-        <div class="subcard">
-          <h2>Account Link</h2>
-          <div class="status">
-            <div><strong>Linked IDs:</strong> <span id="linked-identities">loading...</span></div>
-          </div>
-          <div class="controls">
-            <button id="make-link" class="secondary">Generate Link Code</button>
-            <input id="link-code" placeholder="Enter code from Telegram or desktop">
-            <button id="apply-link">Link This Account</button>
-          </div>
+      </div>
+
+      <div class="subcard">
+        <h2>Account Link</h2>
+        <div class="status-list">
+          <div><strong>Linked IDs:</strong> <span id="linked-identities">loading...</span></div>
+        </div>
+        <div class="field-grid" style="margin-top:12px;">
+          <button id="make-link" class="secondary">Згенерувати код</button>
+          <input id="link-code" placeholder="Введи код із Telegram або desktop">
+          <button id="apply-link">Прив'язати акаунт</button>
         </div>
       </div>
     </aside>
@@ -239,23 +425,35 @@
     <main class="card main">
       <div class="main-head">
         <div>
-          <h1 style="font-size:28px;">Чат з Aiya Core</h1>
-          <p>Цей чат іде в `/ask`, тому тут працюють пам'ять, граф, фічі користувача, screen context і керування локальними сервісами там, де це доступно.</p>
+          <h1 style="font-size:28px;">Чат із Aiya Core</h1>
+          <p>Підтримуються ті самі базові команди, що й у Telegram: `/features`, `/tts on|off`, `/tts_status`, `/speak <текст>`, `/emoji on|off`, `/ocr on|off`, `/subtitles on|off`, `/image on|off`, `/image <prompt>`, `/link <code>`.</p>
+        </div>
+        <div class="links">
+          <a href="http://localhost:8000/health" target="_blank" rel="noreferrer">API health</a>
+          <a href="http://localhost:3000/" target="_blank" rel="noreferrer">Aiya local site</a>
+          <a href="http://localhost:3001/" target="_blank" rel="noreferrer">Open WebUI</a>
         </div>
       </div>
 
       <div id="chat" class="chat"></div>
 
       <div class="composer">
-        <div class="meta">
-          <input id="platform" placeholder="platform" value="web">
-          <input id="external-id" placeholder="external id">
-          <input id="user-name" placeholder="Ім'я" value="WebUser">
-        </div>
-        <textarea id="prompt" placeholder="Напиши щось Айї. Наприклад: підніми телеграм або згадай, що я просив раніше."></textarea>
-        <div class="row">
+        <textarea id="prompt" placeholder="Напиши щось Айї. Наприклад: /image білий лис у зеленому сяйві або /speak Привіт. Ctrl+Enter для відправки."></textarea>
+        <div class="controls">
           <button id="send">Надіслати</button>
+          <button id="play-last" class="secondary">Озвучити останню відповідь</button>
           <button id="clear" class="secondary">Очистити чат</button>
+          <label class="button-like small" style="display:flex;align-items:center;gap:8px;padding:10px 12px;border-radius:14px;border:1px solid var(--line);background:white;">
+            <input id="auto-tts" type="checkbox" style="width:18px;height:18px;margin:0;accent-color:var(--accent);">
+            Автоматично програвати TTS
+          </label>
+        </div>
+        <div class="shortcut-row">
+          <span class="pill">/image ліс у білому світлі</span>
+          <span class="pill">/tts on</span>
+          <span class="pill">/speak Привіт</span>
+          <span class="pill">/features</span>
+          <span class="pill">/link CODE</span>
         </div>
         <div id="error" class="error"></div>
       </div>
@@ -269,89 +467,278 @@
     const platformBox = document.getElementById("platform");
     const externalIdBox = document.getElementById("external-id");
     const userNameBox = document.getElementById("user-name");
+    const tokenBox = document.getElementById("token");
     const sendButton = document.getElementById("send");
-    const refreshButton = document.getElementById("refresh");
-    const startTelegramButton = document.getElementById("start-telegram");
+    const playLastButton = document.getElementById("play-last");
+    const refreshFeaturesButton = document.getElementById("refresh-features");
     const makeLinkButton = document.getElementById("make-link");
     const applyLinkButton = document.getElementById("apply-link");
     const linkCodeBox = document.getElementById("link-code");
+    const autoTtsBox = document.getElementById("auto-tts");
 
-    const storedId = localStorage.getItem("aiya-web-user-id") || String(Math.floor(100000 + Math.random() * 900000));
+    const STORAGE_KEYS = {
+      externalId: "aiya-web-user-id",
+      userName: "aiya-web-user-name",
+      token: "aiya-web-token",
+      autoTts: "aiya-web-auto-tts",
+    };
+
+    const featureLabels = {
+      tts_enabled: "TTS",
+      ocr_enabled: "OCR",
+      emoji_enabled: "Emoji",
+      desktop_subtitles_enabled: "Subtitles",
+      image_generation_enabled: "Картинки",
+    };
+
+    let lastAnswerText = "";
+    let lastAudioUrl = "";
+
+    const storedId = localStorage.getItem(STORAGE_KEYS.externalId) || String(Math.floor(100000 + Math.random() * 900000));
     externalIdBox.value = storedId;
-    localStorage.setItem("aiya-web-user-id", storedId);
+    userNameBox.value = localStorage.getItem(STORAGE_KEYS.userName) || "WebUser";
+    tokenBox.value = localStorage.getItem(STORAGE_KEYS.token) || "";
+    autoTtsBox.checked = localStorage.getItem(STORAGE_KEYS.autoTts) === "1";
 
-    function addMessage(role, text) {
-      const item = document.createElement("div");
-      item.className = `message ${role}`;
-      item.textContent = text;
-      chat.appendChild(item);
-      chat.scrollTop = chat.scrollHeight;
+    function saveIdentityState() {
+      localStorage.setItem(STORAGE_KEYS.externalId, externalIdBox.value.trim() || storedId);
+      localStorage.setItem(STORAGE_KEYS.userName, userNameBox.value.trim() || "WebUser");
+      localStorage.setItem(STORAGE_KEYS.token, tokenBox.value);
+      localStorage.setItem(STORAGE_KEYS.autoTts, autoTtsBox.checked ? "1" : "0");
     }
 
     function currentIdentity() {
+      saveIdentityState();
       return {
         platform: platformBox.value.trim() || "web",
         external_id: Number(externalIdBox.value.trim() || storedId),
-        user_name: userNameBox.value.trim() || "WebUser"
+        user_name: userNameBox.value.trim() || "WebUser",
       };
+    }
+
+    function authHeaders(json = true) {
+      const headers = {};
+      if (json) {
+        headers["Content-Type"] = "application/json";
+      }
+      if (tokenBox.value.trim()) {
+        headers["X-Aiya-Token"] = tokenBox.value.trim();
+      }
+      return headers;
+    }
+
+    function clearAudioUrl() {
+      if (lastAudioUrl) {
+        URL.revokeObjectURL(lastAudioUrl);
+        lastAudioUrl = "";
+      }
+    }
+
+    function createMessageNode(role, payload) {
+      const node = document.createElement("div");
+      node.className = `message ${role}`;
+
+      if (payload.text) {
+        const text = document.createElement("div");
+        text.textContent = payload.text;
+        node.appendChild(text);
+      }
+
+      if (payload.imageUrl) {
+        const image = document.createElement("img");
+        image.src = payload.imageUrl;
+        image.alt = payload.imageAlt || "Aiya image";
+        node.appendChild(image);
+      }
+
+      if (payload.audioUrl) {
+        const audio = document.createElement("audio");
+        audio.controls = true;
+        audio.src = payload.audioUrl;
+        node.appendChild(audio);
+      }
+
+      if (payload.withTtsButton && payload.text) {
+        const actions = document.createElement("div");
+        actions.className = "message-actions";
+        const button = document.createElement("button");
+        button.className = "secondary";
+        button.textContent = "Озвучити";
+        button.addEventListener("click", () => playSpeech(payload.text));
+        actions.appendChild(button);
+        node.appendChild(actions);
+      }
+
+      return node;
+    }
+
+    function addMessage(role, payload) {
+      const normalized = typeof payload === "string" ? { text: payload } : payload;
+      chat.appendChild(createMessageNode(role, normalized));
+      chat.scrollTop = chat.scrollHeight;
+    }
+
+    async function apiJson(url, options = {}) {
+      const response = await fetch(url, options);
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data.detail || data.message || JSON.stringify(data) || `${response.status}`);
+      }
+      return data;
+    }
+
+    async function apiBlob(url, options = {}) {
+      const response = await fetch(url, options);
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(text || `${response.status}`);
+      }
+      return response.blob();
     }
 
     async function loadStatus() {
       errorBox.textContent = "";
       try {
-        const [healthRes, gameRes, controlRes] = await Promise.all([
-          fetch("/health"),
-          fetch("/game/capabilities"),
-          fetch("/control/capabilities"),
+        const [health, game, control] = await Promise.all([
+          apiJson("/health"),
+          apiJson("/game/capabilities"),
+          apiJson("/control/capabilities"),
         ]);
-        const health = await healthRes.json();
-        const game = await gameRes.json();
-        const control = await controlRes.json();
 
         document.getElementById("health-label").textContent =
-          `API ok, профіль ${health.performance}, Ollama: ${health.ollama_host}`;
-        document.getElementById("game-cap").textContent =
-          game.enabled ? "увімкнений у конфігу" : "вимкнений у конфігу";
-        document.getElementById("service-capabilities").innerHTML =
-          `<div><strong>Локальний контроль:</strong> ${control.mode}</div>
-           <div><strong>Docker CLI:</strong> ${control.docker_cli ? "є" : "нема"}</div>
-           <div><strong>Підтримка:</strong> ${control.supported_services.join(", ")}</div>`;
+          `API ok, профіль ${health.performance}, chat=${health.chat_model}`;
+
+        document.getElementById("service-capabilities").innerHTML = `
+          <div><strong>LLM mode:</strong> ${health.llm_mode}</div>
+          <div><strong>TTS backend:</strong> ${health.tts.provider}</div>
+          <div><strong>Vision:</strong> ${health.vision_model}</div>
+          <div><strong>Game mode:</strong> ${game.enabled ? "увімкнений" : "вимкнений"}</div>
+          <div><strong>Керування сервісами:</strong> ${control.mode}</div>
+          <div><strong>Підтримка:</strong> ${control.supported_services.join(", ")}</div>
+        `;
       } catch (error) {
         document.getElementById("health-label").textContent = "Не вдалося прочитати стан";
         errorBox.textContent = error.message;
       }
-      await loadIdentity();
     }
 
     async function loadIdentity() {
+      const identity = currentIdentity();
       try {
-        const params = new URLSearchParams({ user_name: currentIdentity().user_name });
-        const response = await fetch(`/users/${currentIdentity().platform}/${currentIdentity().external_id}/identity?${params}`);
-        const data = await response.json();
-        if (!response.ok) {
-          throw new Error(data.detail || JSON.stringify(data));
-        }
-        document.getElementById("linked-identities").textContent =
-          (data.linked_identities || []).map((item) => `${item.platform}:${item.external_id}`).join(", ") || "only current identity";
+        const params = new URLSearchParams({ user_name: identity.user_name });
+        const data = await apiJson(`/users/${identity.platform}/${identity.external_id}/identity?${params.toString()}`);
+        const linked = (data.linked_identities || []).map((item) => `${item.platform}:${item.external_id}`);
+        document.getElementById("linked-identities").textContent = linked.join(", ") || "лише поточний акаунт";
       } catch (error) {
         document.getElementById("linked-identities").textContent = `error: ${error.message}`;
       }
     }
 
+    async function loadFeatures() {
+      const identity = currentIdentity();
+      try {
+        const data = await apiJson(`/users/${identity.platform}/${identity.external_id}/features`);
+        for (const checkbox of document.querySelectorAll("[data-feature]")) {
+          checkbox.checked = Boolean(data[checkbox.dataset.feature]);
+        }
+      } catch (error) {
+        errorBox.textContent = error.message;
+      }
+    }
+
+    async function patchFeature(field, enabled) {
+      const identity = currentIdentity();
+      const payload = { [field]: enabled };
+      await apiJson(`/users/${identity.platform}/${identity.external_id}/features`, {
+        method: "PATCH",
+        headers: authHeaders(),
+        body: JSON.stringify(payload),
+      });
+    }
+
+    async function toggleFeature(event) {
+      const checkbox = event.target;
+      checkbox.disabled = true;
+      errorBox.textContent = "";
+      try {
+        await patchFeature(checkbox.dataset.feature, checkbox.checked);
+        addMessage("aiya", { text: `${featureLabels[checkbox.dataset.feature] || checkbox.dataset.feature}: ${checkbox.checked ? "увімкнено" : "вимкнено"}` });
+      } catch (error) {
+        checkbox.checked = !checkbox.checked;
+        errorBox.textContent = error.message;
+      } finally {
+        checkbox.disabled = false;
+      }
+    }
+
+    async function playSpeech(text) {
+      const payloadText = (text || "").trim();
+      if (!payloadText) {
+        return;
+      }
+      clearAudioUrl();
+      const blob = await apiBlob("/speech/file", {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({ text: payloadText }),
+      });
+      lastAudioUrl = URL.createObjectURL(blob);
+      addMessage("aiya", { text: "Ось аудіо-відповідь:", audioUrl: lastAudioUrl });
+      const audio = chat.querySelector(".message:last-child audio");
+      if (audio) {
+        audio.play().catch(() => {});
+      }
+    }
+
+    async function generateImage(prompt, announce = true) {
+      const cleanPrompt = (prompt || "").trim();
+      if (!cleanPrompt) {
+        return;
+      }
+      const blob = await apiBlob("/image/file", {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({ prompt: cleanPrompt }),
+      });
+      const imageUrl = URL.createObjectURL(blob);
+      addMessage("aiya", {
+        text: announce ? `Картинка для: ${cleanPrompt}` : "",
+        imageUrl,
+        imageAlt: cleanPrompt,
+      });
+    }
+
+    async function showFeatureSummary() {
+      const identity = currentIdentity();
+      const data = await apiJson(`/users/${identity.platform}/${identity.external_id}/features`);
+      const lines = Object.keys(data).sort().map((key) => `- ${key}: ${data[key]}`);
+      addMessage("aiya", { text: `Поточні feature flags:\n${lines.join("\n")}` });
+      await loadFeatures();
+    }
+
+    async function showTtsStatus() {
+      const data = await apiJson("/speech/capabilities");
+      addMessage("aiya", {
+        text:
+          "TTS capabilities:\n" +
+          `- provider: ${data.provider}\n` +
+          `- voice: ${data.voice}\n` +
+          `- delivery_enabled: ${data.delivery_enabled}\n` +
+          `- edge_available: ${data.edge_available}`,
+      });
+    }
+
     async function generateLinkCode() {
       makeLinkButton.disabled = true;
+      errorBox.textContent = "";
       try {
-        const response = await fetch("/account/link/code", {
+        const data = await apiJson("/account/link/code", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ...currentIdentity(), label: "web-ui" })
+          headers: authHeaders(),
+          body: JSON.stringify({ ...currentIdentity(), label: "web-ui" }),
         });
-        const data = await response.json();
-        if (!response.ok) {
-          throw new Error(data.detail || JSON.stringify(data));
-        }
         linkCodeBox.value = data.code || "";
-        addMessage("aiya", `Код прив'язки: ${data.code}. Введи його в Telegram через /link або в desktop client.`);
+        addMessage("aiya", { text: `Код прив'язки: ${data.code}. Введи його в Telegram через /link або в desktop-клієнті.` });
       } catch (error) {
         errorBox.textContent = error.message;
       } finally {
@@ -359,21 +746,20 @@
       }
     }
 
-    async function applyLinkCode() {
-      const code = linkCodeBox.value.trim().toUpperCase();
-      if (!code) return;
+    async function applyLinkCode(code = "") {
+      const linkCode = (code || linkCodeBox.value || "").trim().toUpperCase();
+      if (!linkCode) {
+        return;
+      }
       applyLinkButton.disabled = true;
+      errorBox.textContent = "";
       try {
-        const response = await fetch("/account/link/consume", {
+        await apiJson("/account/link/consume", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ...currentIdentity(), code })
+          headers: authHeaders(),
+          body: JSON.stringify({ ...currentIdentity(), code: linkCode }),
         });
-        const data = await response.json();
-        if (!response.ok) {
-          throw new Error(data.detail || JSON.stringify(data));
-        }
-        addMessage("aiya", "Акаунт успішно прив'язано. Пам'ять і профіль тепер спільні між каналами.");
+        addMessage("aiya", { text: "Акаунт успішно прив'язано. Пам'ять і профіль тепер спільні між каналами." });
         await loadIdentity();
       } catch (error) {
         errorBox.textContent = error.message;
@@ -382,72 +768,163 @@
       }
     }
 
-    async function sendPrompt() {
-      const text = promptBox.value.trim();
-      if (!text) return;
+    async function startService(serviceName) {
       errorBox.textContent = "";
-      sendButton.disabled = true;
-      addMessage("user", text);
-      promptBox.value = "";
-
       try {
-        const response = await fetch("/ask", {
+        const data = await apiJson(`/control/services/${serviceName}/start`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            platform: platformBox.value.trim() || "web",
-            external_id: Number(externalIdBox.value.trim() || storedId),
-            user_name: userNameBox.value.trim() || "WebUser",
-            text
-          })
+          headers: authHeaders(false),
         });
-        const data = await response.json();
-        if (!response.ok) {
-          throw new Error(data.detail || JSON.stringify(data));
-        }
-        addMessage("aiya", data.answer || "Немає відповіді");
+        addMessage("aiya", { text: data.message || `Сервіс ${serviceName} запущено.` });
       } catch (error) {
-        addMessage("aiya", `Помилка: ${error.message}`);
+        addMessage("aiya", { text: `Не вдалося запустити ${serviceName}: ${error.message}` });
       } finally {
-        sendButton.disabled = false;
+        await loadStatus();
       }
     }
 
-    async function startTelegram() {
-      startTelegramButton.disabled = true;
-      errorBox.textContent = "";
-      try {
-        const response = await fetch("/control/services/telegram/start", { method: "POST" });
-        const data = await response.json();
-        if (!response.ok) {
-          throw new Error(data.detail || JSON.stringify(data));
+    async function processSlashCommand(text) {
+      const normalized = text.trim();
+      const lowered = normalized.toLowerCase();
+
+      if (lowered === "/features") {
+        await showFeatureSummary();
+        return true;
+      }
+      if (lowered === "/tts_status") {
+        await showTtsStatus();
+        return true;
+      }
+      if (lowered.startsWith("/speak ")) {
+        await playSpeech(normalized.slice(7));
+        return true;
+      }
+      if (lowered.startsWith("/image ")) {
+        await generateImage(normalized.slice(7));
+        return true;
+      }
+      if (lowered.startsWith("/link ")) {
+        await applyLinkCode(normalized.slice(6));
+        return true;
+      }
+
+      const toggleCommands = {
+        "/tts": "tts_enabled",
+        "/emoji": "emoji_enabled",
+        "/ocr": "ocr_enabled",
+        "/subtitles": "desktop_subtitles_enabled",
+        "/image": "image_generation_enabled",
+      };
+
+      for (const [command, field] of Object.entries(toggleCommands)) {
+        if (lowered.startsWith(`${command} `)) {
+          const mode = lowered.slice(command.length + 1).trim();
+          if (!["on", "off"].includes(mode)) {
+            throw new Error(`Використання: ${command} on або ${command} off`);
+          }
+          await patchFeature(field, mode === "on");
+          await loadFeatures();
+          addMessage("aiya", { text: `${featureLabels[field] || field}: ${mode === "on" ? "увімкнено" : "вимкнено"}` });
+          return true;
         }
-        addMessage("aiya", data.message || "Telegram start requested.");
+      }
+
+      return false;
+    }
+
+    async function sendPrompt() {
+      const text = promptBox.value.trim();
+      if (!text) {
+        return;
+      }
+
+      errorBox.textContent = "";
+      sendButton.disabled = true;
+      addMessage("user", { text });
+      promptBox.value = "";
+
+      try {
+        if (await processSlashCommand(text)) {
+          return;
+        }
+
+        const identity = currentIdentity();
+        const data = await apiJson("/ask", {
+          method: "POST",
+          headers: authHeaders(),
+          body: JSON.stringify({
+            platform: identity.platform,
+            external_id: identity.external_id,
+            user_name: identity.user_name,
+            text,
+          }),
+        });
+
+        lastAnswerText = data.answer || "Немає відповіді";
+        addMessage("aiya", {
+          text: lastAnswerText,
+          withTtsButton: Boolean(data.tts_available),
+        });
+
+        if (data.features) {
+          for (const checkbox of document.querySelectorAll("[data-feature]")) {
+            if (checkbox.dataset.feature in data.features) {
+              checkbox.checked = Boolean(data.features[checkbox.dataset.feature]);
+            }
+          }
+        }
+
+        if (data.tts_available && autoTtsBox.checked) {
+          await playSpeech(lastAnswerText);
+        }
       } catch (error) {
-        addMessage("aiya", `Не вдалося підняти Telegram: ${error.message}`);
+        addMessage("aiya", { text: `Помилка: ${error.message}` });
       } finally {
-        startTelegramButton.disabled = false;
-        loadStatus();
+        sendButton.disabled = false;
       }
     }
 
     document.getElementById("clear").addEventListener("click", () => {
       chat.innerHTML = "";
       errorBox.textContent = "";
+      clearAudioUrl();
+      lastAnswerText = "";
     });
+
     sendButton.addEventListener("click", sendPrompt);
-    refreshButton.addEventListener("click", loadStatus);
-    startTelegramButton.addEventListener("click", startTelegram);
+    playLastButton.addEventListener("click", () => playSpeech(lastAnswerText));
+    refreshFeaturesButton.addEventListener("click", loadFeatures);
     makeLinkButton.addEventListener("click", generateLinkCode);
-    applyLinkButton.addEventListener("click", applyLinkCode);
+    applyLinkButton.addEventListener("click", () => applyLinkCode());
+
+    for (const field of [platformBox, externalIdBox, userNameBox, tokenBox, autoTtsBox]) {
+      field.addEventListener("change", async () => {
+        saveIdentityState();
+        await Promise.all([loadIdentity(), loadFeatures()]);
+      });
+    }
+
+    for (const checkbox of document.querySelectorAll("[data-feature]")) {
+      checkbox.addEventListener("change", toggleFeature);
+    }
+
+    for (const button of document.querySelectorAll("[data-service]")) {
+      button.addEventListener("click", () => startService(button.dataset.service));
+    }
+
     promptBox.addEventListener("keydown", (event) => {
       if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
         sendPrompt();
       }
     });
 
-    addMessage("aiya", "Aiya на місці. Тут працює саме локальний Aiya API.");
-    loadStatus();
+    addMessage("aiya", {
+      text: "Aiya на місці. Тут працює той самий API-шлях, що й у Telegram, включно з slash-командами, TTS і генерацією картинок.",
+    });
+
+    Promise.all([loadStatus(), loadIdentity(), loadFeatures()]).catch((error) => {
+      errorBox.textContent = error.message;
+    });
   </script>
 </body>
 </html>
