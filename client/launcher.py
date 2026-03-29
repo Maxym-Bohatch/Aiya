@@ -23,6 +23,7 @@ DEFAULT_CONFIG_PATH = PROJECT_ROOT / ".env.client"
 EXAMPLE_CONFIG_PATH = PROJECT_ROOT / ".env.client.example"
 CLIENT_PREREQS_SCRIPT = PROJECT_ROOT / "scripts" / "client" / "install_client_prereqs.ps1"
 OCR_LANGS_SCRIPT = PROJECT_ROOT / "scripts" / "client" / "install_tesseract_langs.ps1"
+CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 os.environ.setdefault("AIYA_ENV_FILE", str(DEFAULT_CONFIG_PATH))
 
 DEFAULTS = {
@@ -418,6 +419,7 @@ class AiyaClientLauncher:
                 cwd=str(PROJECT_ROOT),
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
+                creationflags=CREATE_NO_WINDOW,
             )
         except Exception as exc:
             self._append_log(f"Failed to launch client prerequisite installer: {exc}")
@@ -519,6 +521,7 @@ class AiyaClientLauncher:
                 ],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
+                creationflags=CREATE_NO_WINDOW,
             )
         except Exception as exc:
             self._append_log(f"Failed to launch Tesseract install: {exc}")
@@ -544,6 +547,7 @@ class AiyaClientLauncher:
                 cwd=str(PROJECT_ROOT),
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
+                creationflags=CREATE_NO_WINDOW,
             )
         except Exception as exc:
             self._append_log(f"Failed to launch OCR language installer: {exc}")

@@ -19,7 +19,7 @@ def desktop_dir() -> Path:
 
 
 class ServerSetupDialog:
-    def __init__(self, parent: tk.Tk):
+    def __init__(self, parent: tk.Tk, existing_values: dict[str, str] | None = None):
         self.top = tk.Toplevel(parent)
         self.top.title("Server Setup")
         self.top.geometry("760x760")
@@ -28,36 +28,46 @@ class ServerSetupDialog:
         self.top.grab_set()
 
         self.result: dict | None = None
+        self.existing_values = existing_values or {}
 
-        self.telegram_token_var = tk.StringVar()
-        self.db_password_var = tk.StringVar(value=generate_secret())
-        self.admin_token_var = tk.StringVar(value=generate_secret())
-        self.extra_admin_tokens_var = tk.StringVar()
-        self.host_control_token_var = tk.StringVar()
-        self.profile_var = tk.StringVar(value="balanced")
-        self.hardware_var = tk.StringVar(value="")
-        self.llm_mode_var = tk.StringVar(value="bundled_ollama")
-        self.external_ollama_url_var = tk.StringVar(value="http://host.docker.internal:11434")
-        self.external_api_url_var = tk.StringVar(value="https://api.openai.com/v1")
-        self.external_api_key_var = tk.StringVar()
-        self.chat_model_var = tk.StringVar(value="qwen2.5:3b")
-        self.embed_model_var = tk.StringVar(value="nomic-embed-text")
-        self.vision_model_var = tk.StringVar(value="llava:7b")
-        self.translation_model_var = tk.StringVar(value="auto")
-        self.tts_preset_var = tk.StringVar(value="balanced_uk")
-        self.tts_provider_var = tk.StringVar(value="edge")
-        self.tts_voice_var = tk.StringVar(value="uk-UA-PolinaNeural")
-        self.tts_rate_var = tk.StringVar(value="+0%")
-        self.tts_pitch_var = tk.StringVar(value="+0Hz")
-        self.enable_tts_var = tk.BooleanVar(value=True)
-        self.enable_ocr_var = tk.BooleanVar(value=False)
-        self.enable_vision_var = tk.BooleanVar(value=True)
-        self.enable_image_var = tk.BooleanVar(value=False)
+        self.telegram_token_var = tk.StringVar(value=self._existing("TELEGRAM_TOKEN"))
+        self.db_password_var = tk.StringVar(value=self._existing("DB_PASSWORD") or generate_secret())
+        self.admin_token_var = tk.StringVar(value=self._existing("AIYA_ADMIN_TOKEN") or generate_secret())
+        self.extra_admin_tokens_var = tk.StringVar(value=self._existing("AIYA_EXTRA_ADMIN_TOKENS"))
+        self.host_control_token_var = tk.StringVar(value=self._existing("HOST_CONTROL_TOKEN"))
+        self.profile_var = tk.StringVar(value=self._existing("AIYA_PERFORMANCE_PROFILE") or "balanced")
+        self.hardware_var = tk.StringVar(value=self._existing("AIYA_HARDWARE_CLASS"))
+        self.llm_mode_var = tk.StringVar(value=self._existing("AIYA_LLM_MODE") or "bundled_ollama")
+        self.external_ollama_url_var = tk.StringVar(value=self._existing("OLLAMA_HOST") or "http://host.docker.internal:11434")
+        self.external_api_url_var = tk.StringVar(value=self._existing("AIYA_LLM_BASE_URL") or "https://api.openai.com/v1")
+        self.external_api_key_var = tk.StringVar(value=self._existing("AIYA_LLM_API_KEY"))
+        self.chat_model_var = tk.StringVar(value=self._existing("OLLAMA_CHAT_MODEL") or "qwen2.5:3b")
+        self.embed_model_var = tk.StringVar(value=self._existing("OLLAMA_EMBED_MODEL") or "nomic-embed-text")
+        self.vision_model_var = tk.StringVar(value=self._existing("OLLAMA_VISION_MODEL") or "llava:7b")
+        self.translation_model_var = tk.StringVar(value=self._existing("AIYA_TRANSLATION_MODEL") or "auto")
+        self.tts_preset_var = tk.StringVar(value=self._existing("AIYA_TTS_PRESET") or "balanced_uk")
+        self.tts_provider_var = tk.StringVar(value=self._existing("AIYA_TTS_PROVIDER") or "edge")
+        self.tts_voice_var = tk.StringVar(value=self._existing("TTS_VOICE") or "uk-UA-PolinaNeural")
+        self.tts_rate_var = tk.StringVar(value=self._existing("AIYA_TTS_RATE") or "+0%")
+        self.tts_pitch_var = tk.StringVar(value=self._existing("AIYA_TTS_PITCH") or "+0Hz")
+        self.enable_tts_var = tk.BooleanVar(value=self._existing_bool("ENABLE_TTS", True))
+        self.enable_ocr_var = tk.BooleanVar(value=self._existing_bool("ENABLE_OCR", False))
+        self.enable_vision_var = tk.BooleanVar(value=self._existing_bool("ENABLE_VISION", True))
+        self.enable_image_var = tk.BooleanVar(value=self._existing_bool("ENABLE_IMAGE_GENERATION", False))
         self.autostart_server_var = tk.BooleanVar(value=True)
 
         self._build()
         self.llm_mode_var.trace_add("write", lambda *_: self._sync_llm_mode())
         self._sync_llm_mode()
+
+    def _existing(self, key: str) -> str:
+        return (self.existing_values.get(key) or "").strip()
+
+    def _existing_bool(self, key: str, default: bool) -> bool:
+        raw = self._existing(key)
+        if not raw:
+            return default
+        return raw.lower() in {"1", "true", "yes", "on"}
 
     def _build(self):
         shell = ttk.Frame(self.top, padding=16)

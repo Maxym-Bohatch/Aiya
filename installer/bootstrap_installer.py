@@ -15,13 +15,14 @@ from tkinter import filedialog, messagebox, ttk
 import requests
 
 from installer.common import create_scrollable_frame, resource_path, write_install_info
-from installer.server_env import write_server_env
+from installer.server_env import read_server_env, write_server_env
 from installer.server_setup import ServerSetupDialog, desktop_dir
 
 DEFAULT_REPO_URL = "https://github.com/Maxym-Bohatch/Aiya"
 DEFAULT_BRANCH = "main"
 DEFAULT_INSTALL_DIR = str(Path.home() / "Aiya")
 DOCKER_WINDOWS_INSTALL_DOC = "https://docs.docker.com/desktop/setup/install/windows-install/"
+CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 CLIENT_ONLY_PATHS = [
     ".env.client.example",
@@ -218,6 +219,7 @@ class InstallerApp:
                 ],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
+                creationflags=CREATE_NO_WINDOW,
             )
             self.root.after(0, lambda: self.prereq_var.set("Docker Desktop installer launched"))
         except Exception as exc:
@@ -228,7 +230,9 @@ class InstallerApp:
         mode = self.mode_var.get()
         self.server_setup_config = None
         if mode in {"server", "both"}:
-            setup = ServerSetupDialog(self.root).show()
+            install_dir = Path(self.dir_var.get()).expanduser() if self.dir_var.get().strip() else None
+            existing_values = read_server_env(install_dir) if install_dir else {}
+            setup = ServerSetupDialog(self.root, existing_values=existing_values).show()
             if setup is None:
                 self.append_log("Installation cancelled during server setup.")
                 return
@@ -310,6 +314,7 @@ class InstallerApp:
                     ],
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
+                    creationflags=CREATE_NO_WINDOW,
                 )
                 self.append_log("Launched Tesseract install helper.")
                 return
@@ -525,6 +530,7 @@ class InstallerApp:
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
+            creationflags=CREATE_NO_WINDOW,
         )
         try:
             assert process.stdout is not None

@@ -10,13 +10,14 @@ from pathlib import Path
 from tkinter import messagebox, ttk
 
 from installer.common import create_scrollable_frame
-from installer.server_env import write_server_env
+from installer.server_env import read_server_env, write_server_env
 from installer.server_setup import ServerSetupDialog
 from installer.update_manager import update_installation
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 ENV_PATH = PROJECT_ROOT / ".env"
 DOCKER_DOC_URL = "https://docs.docker.com/desktop/setup/install/windows-install/"
+CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 
 class AiyaServerLauncher:
@@ -185,6 +186,7 @@ class AiyaServerLauncher:
                 ],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
+                creationflags=CREATE_NO_WINDOW,
             )
             self._append_log("Started Docker Desktop installation via winget.")
         except Exception as exc:
@@ -203,7 +205,7 @@ class AiyaServerLauncher:
             )
             if not proceed:
                 return True
-        setup = ServerSetupDialog(self.root).show()
+        setup = ServerSetupDialog(self.root, existing_values=read_server_env(PROJECT_ROOT)).show()
         if setup is None:
             self._append_log("Server setup was cancelled.")
             return False
@@ -237,6 +239,7 @@ class AiyaServerLauncher:
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
                     text=True,
+                    creationflags=CREATE_NO_WINDOW,
                 )
                 assert process.stdout is not None
                 for line in process.stdout:
